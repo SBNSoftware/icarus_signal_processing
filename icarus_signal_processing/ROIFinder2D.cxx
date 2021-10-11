@@ -286,11 +286,7 @@ void icarus_signal_processing::ROICannyFilter::operator()(const IROIFinder2D::Ar
     int numChannels = waveform2D.size();
     int numTicks    = waveform2D[0].size();
 
-    fullEvent.resize(numChannels);
-    for (auto &v : fullEvent)
-    {
-        v.resize(numTicks);
-    }
+    fullEvent.resize(numChannels,std::vector<float>(numTicks));
 
     // 1. Buffers for intermediate computations
     Array2D<float> buffer(           numChannels, std::vector<float>(numTicks,0.));

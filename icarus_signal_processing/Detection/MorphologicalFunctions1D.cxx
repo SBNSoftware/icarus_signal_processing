@@ -30,7 +30,7 @@ void Dilation1D::operator()(const Waveform<bool>& inputWaveform,
 
     if (dilationVec.size() != inputWaveform.size())
     {
-        std::cout << "Dilation1D: output dilation vector not same size as input waveform array" << std::endl;
+        std::cout << "Dilation1D: output dilation vector not same size as input waveform array: input size: " << inputWaveform.size() << ", output size: " << dilationVec.size() << std::endl;
         return;
     }
 
@@ -145,7 +145,7 @@ template <typename T> void icarus_signal_processing::Dilation1D::getDilation(con
 
     if (dilationVec.size() != inputWaveform.size())
     {
-        std::cout << "Dilation1D: output dilation vector not same size as input waveform array" << std::endl;
+        std::cout << "Dilation1D: output dilation vector not same size as input waveform array, inputWaveform size: " << inputWaveform.size() << ", output size: " << dilationVec.size() << std::endl;
         return;
     }
 
