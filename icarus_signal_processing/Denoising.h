@@ -67,8 +67,10 @@ public:
                              const unsigned int,
                              const unsigned int ) const;
     
-    float getMedian(      std::vector<float>&, const unsigned int) const;
-    float getMostProbable(std::vector<float>&, const unsigned int) const;
+    float getMedian(        std::vector<float>::iterator, std::vector<float>::iterator) const;
+    float getMostProbable(  std::vector<float>::iterator, std::vector<float>::iterator) const;
+    float getMode(          std::vector<float>::iterator, std::vector<float>::iterator) const;
+    float getIteratedMedian(std::vector<float>::iterator, std::vector<float>::iterator, int&, int&) const;
 
 private:
     // The code for the most probable calculation will need a std vector
