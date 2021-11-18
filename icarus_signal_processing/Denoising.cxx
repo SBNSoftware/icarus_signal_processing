@@ -26,7 +26,7 @@ void icarus_signal_processing::Denoising::getSelectVals(ArrayFloat::const_iterat
     {
         std::vector<float> localVec = morphedWaveformsItr[i];
 
-        float median = getMedian(localVec, localVec.size());
+        float median = getMedian(localVec.begin(), localVec.end());
 
         std::vector<float> baseVec;
         baseVec.resize(localVec.size());
@@ -220,7 +220,7 @@ void icarus_signal_processing::Denoiser1D_Ave::operator()(ArrayFloat::iterator  
 
             if (idxV > 0)
             {
-                float median   = getMedian(v,idxV);
+                float median   = getMedian(v.begin(),v.begin()+idxV);
 //                float mostProb = getMostProbable(v,idxV);
 //                float average  = std::accumulate(v.begin(),v.end(),0.) / float(idxV);
 
@@ -235,7 +235,7 @@ void icarus_signal_processing::Denoiser1D_Ave::operator()(ArrayFloat::iterator  
                     idxV--;
                 }
 
-                float tempMedian = getMedian(v,idxV);
+                float tempMedian = getMedian(v.begin(),v.begin()+idxV);
 
 //                std::cout << ">tick: " << i << ", group: " << j << ", median: " << median << ", mostProb: " << mostProb << ", average: " << average << ", rms: " << rms << ", tempMedian: " << tempMedian << std::endl;
 
@@ -276,30 +276,32 @@ void icarus_signal_processing::Denoiser1D_Ave::operator()(ArrayFloat::iterator  
     return;
 }
 
-float icarus_signal_processing::Denoising::getMedian(std::vector<float>& vals, const unsigned int nVals) const
+float icarus_signal_processing::Denoising::getMedian(std::vector<float>::iterator vecStart, std::vector<float>::iterator vecEnd) const
 {
     float median(0.);
+
+    size_t nVals = std::distance(vecStart,vecEnd);
 
     if (nVals > 0) 
     {
         if (nVals < 3)
         {
-            median = std::accumulate(vals.begin(),vals.begin()+nVals,0.) / float(nVals);
+            median = std::accumulate(vecStart,vecEnd,0.) / float(nVals);
         }
         else if (nVals % 2 == 0) 
         {
-            const auto m1 = vals.begin() + nVals / 2 - 1;
-            const auto m2 = vals.begin() + nVals / 2;
-            std::nth_element(vals.begin(), m1, vals.begin() + nVals);
+            const auto m1 = vecStart + nVals / 2 - 1;
+            const auto m2 = vecStart + nVals / 2;
+            std::nth_element(vecStart, m1, vecEnd);
             const auto e1 = *m1;
-            std::nth_element(vals.begin(), m2, vals.begin() + nVals);
+            std::nth_element(vecStart, m2, vecEnd);
             const auto e2 = *m2;
             median = (e1 + e2) / 2.0;
         } 
         else 
         {
-            const auto m = vals.begin() + nVals / 2;
-            std::nth_element(vals.begin(), m, vals.begin() + nVals);
+            const auto m = vecStart + nVals / 2;
+            std::nth_element(vecStart, m, vecEnd);
             median = *m;
         }
     }
@@ -307,20 +309,22 @@ float icarus_signal_processing::Denoising::getMedian(std::vector<float>& vals, c
     return median;
 }
 
-float icarus_signal_processing::Denoising::getMostProbable(std::vector<float>& vals, const unsigned int nVals) const
+float icarus_signal_processing::Denoising::getMostProbable(std::vector<float>::iterator vecStart, std::vector<float>::iterator vecEnd) const
 {
     float mostProbable(0.);
+
+    size_t nVals = std::distance(vecStart,vecEnd);
 
     // Do a simple average if only a few bins
     if (nVals < 5)
     {
-        mostProbable = std::accumulate(vals.begin(),vals.begin()+nVals,0.) / float(nVals);
+        mostProbable = std::accumulate(vecStart,vecStart+nVals,0.) / float(nVals);
     }
     // Otherwise try to form value around MP
     else
     {
-        auto minVItr = std::min_element(vals.begin(),vals.begin()+nVals);
-        auto maxVItr = std::max_element(vals.begin(),vals.begin()+nVals);
+        auto minVItr = std::min_element(vecStart,vecStart+nVals);
+        auto maxVItr = std::max_element(vecStart,vecStart+nVals);
 
         float minValue = *minVItr;
         float maxValue = *maxVItr;
@@ -329,7 +333,7 @@ float icarus_signal_processing::Denoising::getMostProbable(std::vector<float>& v
 
         std::fill(fMPVec.begin(),fMPVec.begin() + numBins,0);
   
-        for(typename std::vector<float>::iterator vItr = vals.begin(); vItr != vals.begin() + nVals; vItr++)
+        for(std::vector<float>::const_iterator vItr = vecStart; vItr != vecStart + nVals; vItr++)
         {
             int binIdx = int(std::round((*vItr - minValue)));
   
@@ -369,6 +373,109 @@ float icarus_signal_processing::Denoising::getMostProbable(std::vector<float>& v
 
     return mostProbable;
 }
+
+float icarus_signal_processing::Denoising::getMode(std::vector<float>::iterator vecStart, std::vector<float>::iterator vecEnd) const
+{
+    float mode(0.);
+
+    size_t nVals = std::distance(vecStart,vecEnd);
+
+    // Do a simple average if only a few bins
+    if (nVals < 5)
+    {
+        mode = std::accumulate(vecStart,vecStart+nVals,0.) / float(nVals);
+    }
+    // Otherwise, try to calculate the mode
+    else
+    {
+        // Note our input data is in float format and one can't really calculate a mode from that
+        // Our program is to convert the input vals to integer values where we multiply by two so 
+        // we can effectively have numbers on the scale of 0.5 ADC counts. 
+        std::map<int,int> occuranceMap;
+
+//        for(const auto& val : vals) occuranceMap[int(std::round(2 * val))]++;
+        for(std::vector<float>::const_iterator itr = vecStart; itr != vecEnd; itr++) occuranceMap[int(*itr)]++;
+
+        // Find the value with the most occurances
+        int maxOccuranceVal(0);
+        int maxOccuranceCnt(-1);
+
+        for(const auto& mapItr : occuranceMap)
+        {
+            if (mapItr.second > maxOccuranceCnt)
+            {
+                maxOccuranceVal = mapItr.first;
+                maxOccuranceCnt = mapItr.second;
+            }
+        }
+
+        if (maxOccuranceCnt > 0)
+        {
+            float modeCnt = maxOccuranceCnt;
+
+            mode = maxOccuranceCnt * float(maxOccuranceVal);
+
+            // Averaging with two nearest neigbors
+            if (occuranceMap.find(maxOccuranceVal-1) != occuranceMap.end())
+            {
+                mode    += occuranceMap[maxOccuranceVal-1] * (maxOccuranceVal - 1);
+                modeCnt += occuranceMap[maxOccuranceVal-1];
+            }
+
+            if (occuranceMap.find(maxOccuranceVal+1) != occuranceMap.end())
+            {
+                mode    += occuranceMap[maxOccuranceVal+1] * (maxOccuranceVal + 1);
+                modeCnt += occuranceMap[maxOccuranceVal+1];
+            }
+
+            mode /= modeCnt;
+        }
+        else
+        {
+            std::cout << "****> Not able to compute the mode! But this cannot happen? " << maxOccuranceCnt << std::endl;
+        }
+    }
+
+    return mode;
+}
+
+float icarus_signal_processing::Denoising::getIteratedMedian(std::vector<float>::iterator vecBegin, std::vector<float>::iterator vecEnd, int& range, int& coreRange) const
+{
+    float median   = 0.;
+    size_t numBins = std::distance(vecBegin,vecEnd);
+
+    range     = 5000;
+    coreRange = 5000;
+
+    // Realistically, we should have enough bins to get a reliable result, arbitrarily choose that to be 8 bins
+    if (numBins > 8)
+    {
+         // Now sort into ascending order
+         std::sort(vecBegin,vecEnd);
+
+         range     = std::round(*(vecEnd-1) - *vecBegin);
+         coreRange = std::round(*(vecEnd-4)- *(vecBegin+3));
+         median    = getMedian(vecBegin,vecEnd);
+
+         // Make sure we don't have an infinite loop
+         int maxLoops = numBins / 4;
+
+         // Try a refinement by tossing out the largest deviation (which will be at one of the two ends)
+         while(maxLoops-- && range > 2 * coreRange)
+         {
+             // Which end is largest deviation? 
+             if (median - *vecBegin > *(vecEnd-1) - median) vecBegin++;
+             else                                           vecEnd--;
+
+            range     = std::round(*(vecEnd-1) - *vecBegin);
+            coreRange = std::round(*(vecEnd-4)- *(vecBegin+3));
+            median    = getMedian(vecBegin,vecEnd);
+         }
+    }
+
+    return median;
+}
+
 
 icarus_signal_processing::Denoiser2D::Denoiser2D(const IMorphologicalFunctions2D* filterFunction,   // Filter function to apply for finding protected regions
                                                  const VectorFloat&               thresholdVec,     // Threshold to apply
@@ -437,7 +544,7 @@ void icarus_signal_processing::Denoiser2D::operator()(ArrayFloat::iterator      
                 if (!selectValsItr[c][i]) v[idxV++] = filteredWaveformsItr[c][i];
             }
 
-            float median = getMedian(v,idxV);
+            float median = getMedian(v.begin(),v.begin()+idxV);
 
             correctedMediansItr[j][i] = median;
             for (auto k=group_start; k<group_end; ++k) waveLessCoherentItr[k][i] = filteredWaveformsItr[k][i] - median;
@@ -649,7 +756,9 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
     // get an instance of the waveform tools
     icarus_signal_processing::WaveformTools<float> waveformTools;
 
-    VectorFloat v(grouping);
+    VectorFloat vl(grouping/2);
+
+    VectorFloat vu(grouping/2);
 
     for (size_t i=0; i<nTicks; ++i) 
     {
@@ -658,45 +767,77 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
             size_t group_start = j * grouping;
             size_t group_end = (j+1) * grouping;
 
-            // Compute median.
-            size_t idxV(0);
+            size_t group_mid = group_start + grouping/2;
 
-            for (size_t c=group_start; c<group_end; ++c) 
+            // Compute median.
+            size_t idxL(0);
+            size_t idxU(0);
+
+// Temporarily removing the signal protection to study why this does not appear to be working correctly (TU 11/18/2021)
+//            for (size_t c=group_start; c<group_end; ++c) 
+//            {
+//                if (!selectValsItr[c][i]) v[idxV++] = filteredWaveformsItr[c][i];
+//            }
+
+            for(size_t c = group_start; c < group_end; c++)
             {
-                if (!selectValsItr[c][i]) v[idxV++] = filteredWaveformsItr[c][i];
+//                Temporarily removing the signal protection to study why this does not appear to be working correctly (TU 11/18/2021)
+//                if (!selectValsItr[c][i])
+//                {
+                    if (c < group_mid) vl[idxL++] = filteredWaveformsItr[c][i];
+                    else               vu[idxU++] = filteredWaveformsItr[c][i];
+//                }
             }
 
             float median(0.);
 
             // If we have values which are not "protected" then compute the median
-            if (idxV > 0)
+            if (idxL > 8 || idxU > 8)
             {
-                std::fill(v.begin()+idxV,v.end(),v.back());
+                float medianL(0.);
+                int   rangeL(1000);
+                int   coreRangeL(1000);
 
-                if (idxV > 3) waveformTools.triangleSmooth(v,v);
-
-                median   = getMedian(v,idxV);
-
-                // Try to improve by throwing out the values at the extremes
-                std::transform(v.begin(),v.begin()+idxV,v.begin(),std::bind(std::minus<float>(),std::placeholders::_1,median));
-                float rms = std::sqrt(std::inner_product(v.begin(),v.begin()+idxV,v.begin(),0.) / float(v.size()));
-
-                std::sort(v.begin(),v.begin()+idxV,[](const auto& left,const auto& right){return std::abs(left) < std::abs(right);});
-
-                while(idxV > 0)
+                if (idxL > 8)
                 {
-                    if (std::abs(v[idxV-1]) < 2.0 * rms) break;
-                    idxV--;
+                    // Fill out the end of the vector
+                    std::fill(vl.begin()+idxL,vl.end(),*std::max_element(vl.begin(),vl.begin()+idxL));
+
+                    // Should we try smoothing?
+                    if (idxL > 3) waveformTools.triangleSmooth(vl,vl);
+
+                    medianL = getIteratedMedian(vl.begin(), vl.begin()+idxL, rangeL, coreRangeL);
                 }
 
-                // Try to get the improved value for the median. Note we have to add to the previously calculated quantity since it
-                // was subtracted from the vector of values already. 
-//                if (idxV > 5) median += std::accumulate(v.begin(),v.begin()+idxV,0.) / float(idxV);
-                if (idxV > 5) median += getMedian(v,idxV);
-            }
+                float medianU(0.);
+                int   rangeU(1000);
+                int   coreRangeU(1000);
+
+                if (idxU > 8)
+                {
+                    // Fill out the end of the vector
+                    std::fill(vu.begin()+idxU,vu.end(),*std::max_element(vu.begin(),vu.begin()+idxU));
+
+                    // Should we try smoothing?
+                    if (idxU > 3) waveformTools.triangleSmooth(vu,vu);
+
+                    medianU = getIteratedMedian(vu.begin(), vu.begin()+idxU, rangeU, coreRangeU);
+                }
+
+                // Generally, form the "median" as the weighted average between the two groups
+                if (abs(coreRangeL - coreRangeU) < 5) 
+                {
+                    float weightL = 1./float(coreRangeL);
+                    float weightU = 1./float(coreRangeU);
+
+                    median = (weightL * medianL + weightU * medianU) / (weightL + weightU);
+                }
+                // Otherwise, pick the one from the smallest range
+                else if (coreRangeL < coreRangeU) median = medianL;
+                else                              median = medianU;
+           }
                 
             // Add correction
-//            correctedMediansItr[j][i] = median;
             for (auto k=group_start; k<group_end; ++k) 
             {
                 correctedMediansItr[k][i] = median;
@@ -706,53 +847,53 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
     }
 
     // Compensate for offset in channel groupings
-    if (groupingOffset > 0) {
-        for (size_t i=0; i<nTicks; ++i) {
-
-            size_t idxV(0);
-
-            for (size_t c=0; c<groupingOffset; ++c)
-            {
-                if (!selectValsItr[c][i]) v[idxV++] = filteredWaveformsItr[c][i];
-            }
-
-            float median(0.);
-
-            // If we have values which are not "protected" then compute the median
-            if (idxV > 0)
-            {
-                std::fill(v.begin()+idxV,v.end(),v.back());
-
-                if (idxV > 3) waveformTools.triangleSmooth(v,v);
-
-                median   = getMedian(v,idxV);
-
-                // Try to improve by throwing out the values at the extremes
-                std::transform(v.begin(),v.begin()+idxV,v.begin(),std::bind(std::minus<float>(),std::placeholders::_1,median));
-                float rms = std::sqrt(std::inner_product(v.begin(),v.begin()+idxV,v.begin(),0.) / float(idxV));
-
-                std::sort(v.begin(),v.begin()+idxV,[](const auto& left,const auto& right){return std::abs(left) < std::abs(right);});
-
-                while(idxV > 0)
-                {
-                    if (std::abs(v[idxV-1]) < 2.0 * rms) break;
-                    idxV--;
-                }
-
-                // Try to get the improved value for the median. Note we have to add to the previously calculated quantity since it
-                // was subtracted from the vector of values already. 
-//                if (idxV > 5) median += std::accumulate(v.begin(),v.begin()+idxV,0.) / float(idxV);
-                if (idxV > 5) median += getMedian(v,idxV);
-            }
-
-            for (unsigned int k=0; k<groupingOffset; ++k) 
-            {
-                correctedMediansItr[k][i] = median;
-                waveLessCoherentItr[k][i] = filteredWaveformsItr[k][i] - median;
-            }
-
-        }
-    }
+//    if (groupingOffset > 0) {
+//        for (size_t i=0; i<nTicks; ++i) {
+//
+//            size_t idxV(0);
+//
+//            for (size_t c=0; c<groupingOffset; ++c)
+//            {
+//                if (!selectValsItr[c][i]) v[idxV++] = filteredWaveformsItr[c][i];
+//            }
+//
+//            float median(0.);
+//
+//            // If we have values which are not "protected" then compute the median
+//            if (idxV > 0)
+//            {
+//                std::fill(v.begin()+idxV,v.end(),v.back());
+//
+//                if (idxV > 3) waveformTools.triangleSmooth(v,v);
+//
+//                median   = getMedian(v,idxV);
+//
+//                // Try to improve by throwing out the values at the extremes
+//                std::transform(v.begin(),v.begin()+idxV,v.begin(),std::bind(std::minus<float>(),std::placeholders::_1,median));
+//                float rms = std::sqrt(std::inner_product(v.begin(),v.begin()+idxV,v.begin(),0.) / float(idxV));
+//
+//                std::sort(v.begin(),v.begin()+idxV,[](const auto& left,const auto& right){return std::abs(left) < std::abs(right);});
+//
+//                while(idxV > 0)
+//                {
+//                    if (std::abs(v[idxV-1]) < 2.0 * rms) break;
+//                    idxV--;
+//                }
+//
+//                // Try to get the improved value for the median. Note we have to add to the previously calculated quantity since it
+//                // was subtracted from the vector of values already. 
+////                if (idxV > 5) median += std::accumulate(v.begin(),v.begin()+idxV,0.) / float(idxV);
+//                if (idxV > 5) median += getMedian(v,idxV);
+//            }
+//
+//            for (unsigned int k=0; k<groupingOffset; ++k) 
+//            {
+//                correctedMediansItr[k][i] = median;
+//                waveLessCoherentItr[k][i] = filteredWaveformsItr[k][i] - median;
+//            }
+//
+//        }
+//    }
 
     // Now compute the rms for the corrected waveforms
     float rms(0.);
@@ -761,8 +902,9 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
         for (size_t j=0; j<nTicks; ++j) 
         {
             size_t idxV(0);
+            std::vector<float> v(grouping,0.);
             for (size_t k=i*grouping; k<(i+1)*grouping; ++k) v[idxV++] = waveLessCoherentItr[k][j];
-            rms = std::sqrt(std::inner_product(v.begin(), v.begin()+idxV, v.begin(), 0.) / float(v.size()));
+            rms = std::sqrt(std::inner_product(v.begin(), v.begin()+idxV, v.begin(), 0.) / float(idxV));
             intrinsicRMSItr[i][j] = rms;
         }
     }
@@ -810,7 +952,7 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
 
                 if (idxV > 3) waveformTools.triangleSmooth(v,v);
 
-                median   = getMedian(v,idxV);
+                median   = getMedian(v.begin(),v.begin()+idxV);
 
                 // Try to improve by throwing out the values at the extremes
                 std::transform(v.begin(),v.begin()+idxV,v.begin(),std::bind(std::minus<float>(),std::placeholders::_1,median));
@@ -826,7 +968,7 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
 
                 // Try to get the improved value for the median. Note we have to add to the previously calculated quantity since it
                 // was subtracted from the vector of values already. 
-                if (idxV > 5) median += getMedian(v,idxV);
+                if (idxV > 5) median += getMedian(v.begin(),v.begin()+idxV);
             }
 
             for (size_t k = group_start; k < group_end; k++) correctedMediansItr[k][i] = median;
