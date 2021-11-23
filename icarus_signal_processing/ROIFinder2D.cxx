@@ -57,12 +57,7 @@ icarus_signal_processing::ROIChainFilter::ROIChainFilter(size_t             FREQ
 
 void icarus_signal_processing::ROIChainFilter::operator()(const IROIFinder2D::Array2D<float>& waveform2D,
                                                           IROIFinder2D::Array2D<float>&       fullEvent,
-                                                          IROIFinder2D::Array2D<bool>&        outputROI,
-                                                          IROIFinder2D::Array2D<float>&       waveLessCoherent,
-                                                          IROIFinder2D::Array2D<float>&       medianVals,
-                                                          IROIFinder2D::Array2D<float>&       coherentRMS,
-                                                          IROIFinder2D::Array2D<float>&       morphedWaveform2D,
-                                                          IROIFinder2D::Array2D<float>&       finalErosion2D) const
+                                                          IROIFinder2D::Array2D<bool>&        outputROI) const
 {
     // All input arrays must have the same dimensions as waveform2D
 /*
@@ -275,65 +270,39 @@ icarus_signal_processing::ROICannyFilter::ROICannyFilter(const IFFTFilterFunctio
 
 void icarus_signal_processing::ROICannyFilter::operator()(const IROIFinder2D::Array2D<float>& waveform2D,
                                                           IROIFinder2D::Array2D<float>&       fullEvent,
-                                                          IROIFinder2D::Array2D<bool>&        outputROI,
-                                                          IROIFinder2D::Array2D<float>&       waveLessCoherent,
-                                                          IROIFinder2D::Array2D<float>&       medianVals,
-                                                          IROIFinder2D::Array2D<float>&       coherentRMS,
-                                                          IROIFinder2D::Array2D<float>&       morphedWaveform2D,
-                                                          IROIFinder2D::Array2D<float>&       finalErosion2D) const
+                                                          IROIFinder2D::Array2D<bool>&        outputROI) const
 {
+    // Note that this function assumes that the input image has been pedestal corrected and that any coherent noise 
+    // has already been removed. 
+    //
     // All input arrays must have the same dimensions as waveform2D
-    int numChannels = waveform2D.size();
-    int numTicks    = waveform2D[0].size();
+    size_t numChannels = waveform2D.size();
+    size_t numTicks    = waveform2D[0].size();
 
+    // 1. Make sure buffers are correct size
+    fullEvent.resize(numChannels,std::vector<float>(numTicks));
+    outputROI.resize(numChannels,std::vector<bool>(numTicks));
+
+    // 2. Copy data to the output array
     fullEvent.resize(numChannels,std::vector<float>(numTicks));
 
-    // 1. Buffers for intermediate computations
-    Array2D<float> buffer(           numChannels, std::vector<float>(numTicks,0.));
-    Array2D<bool>  selectVals(       numChannels, std::vector<bool>( numTicks,false));
-    Array2D<bool>  rois(             numChannels, std::vector<bool>( numTicks,false));
-    Array2D<bool>  refinedSelectVals(numChannels, std::vector<bool>( numTicks,false));
-
-    icarus_signal_processing::MiscUtils utils;
-
-    // 2. Remove Pedestals and also fill local buffer
-    for (int i = 0; i < numChannels; ++i)
-    {
-        float median = utils.computeMedian(waveform2D[i]);
-
-        for (int j = 0; j < numTicks; ++j)
-        {
-            fullEvent[i][j] = waveform2D[i][j] - median;
-            buffer[i][j]    = fullEvent[i][j];
-        }
-    }
+    for(size_t chanIdx = 0; chanIdx < numChannels; chanIdx++) std::copy(waveform2D[chanIdx].begin(),waveform2D[chanIdx].end(),fullEvent[chanIdx].begin());
 
     // 3. Apply the frequencyh high pass filters
     std::cout << "==> Step 3: Applying frequrency high pass filters" << std::endl;
 
-    (*fImageFilter)(buffer);
+    (*fImageFilter)(fullEvent);
 
-    // 4. Run Coherent Noise Correction
-    std::cout << "==> Step 4: Remove coherent noise" << std::endl;
+    std::cout << "==> Step 4: Perform Canny Edge Detection" << std::endl;
 
-    (*fDenoising)(waveLessCoherent.begin(),
-                  buffer.begin(),
-                  morphedWaveform2D.begin(),
-                  coherentRMS.begin(),
-                  selectVals.begin(),
-                  rois.begin(),
-                  medianVals.begin(),
-                  numChannels);
-  
+    // Reset the rois array (the resize above may have been a no op)
+    Array2D<bool> rois(numChannels,std::vector<bool>(numTicks,false));
 
-    std::cout << "==> Step 5: Perform Canny Edge Detection" << std::endl;
+    // 4. Apply Canny Edge Detection
+    // Since we run on deconvolved waveforms, use dilation 
+    fEdgeDetector->Canny(fullEvent, rois, fADFilter_SX, fADFilter_SY, fSigma_x, fSigma_y, fSigma_r, fLowThreshold, fHighThreshold, 'd'); 
 
-    // 5. Apply Canny Edge Detection
-    fEdgeDetector->Canny(waveLessCoherent, rois, fADFilter_SX, fADFilter_SY,
-                         fSigma_x, fSigma_y, fSigma_r,
-                         fLowThreshold, fHighThreshold, 'd');  // Since we run on deconvolved waveforms, use dilation 
-
-    std::cout << "==> Final Step: get dilation, numChannels: " << numChannels << ", rois: " << rois.size() << ", output: " << outputROI.size() << std::endl;
+    std::cout << "==> Final Step: get dilation, numChannels: " << numChannels << ", rois: " << outputROI.size() << ", output: " << outputROI.size() << std::endl;
 
     Dilation2D(fBinary_Dilation_SX,fBinary_Dilation_SY)(rois.begin(), numChannels, outputROI.begin());
 

@@ -20,7 +20,9 @@ void icarus_signal_processing::Denoising::getSelectVals(ArrayFloat::const_iterat
     auto nTicks = morphedWaveformsItr[0].size();
 
     // Set a protection width
-    int halfWidth = std::max(int(window/8),1);
+    int halfWidth = std::max(int(window/8),4);
+
+//    std::cout << "***** getSelectVals ***** numChannels: " << numChannels << ", grouping: " << grouping << std::endl;
 
     for (size_t i=0; i<numChannels; ++i) 
     {
@@ -33,10 +35,19 @@ void icarus_signal_processing::Denoising::getSelectVals(ArrayFloat::const_iterat
 
         for (size_t j=0; j<baseVec.size(); ++j) baseVec[j] = morphedWaveformsItr[i][j] - median;
 
-        float rms       = std::sqrt(std::inner_product(baseVec.begin(), baseVec.end(), baseVec.begin(), 0.) / float(baseVec.size()));
-        float threshold = thresholdVec[i / grouping] * rms;
+//        float rms       = std::sqrt(std::inner_product(baseVec.begin(), baseVec.end(), baseVec.begin(), 0.) / float(baseVec.size()));
+//        float threshold = thresholdVec[i / grouping] * rms;
+//
+//        float maxValue  = *std::max_element(baseVec.begin(),baseVec.end());
+//        float minValue  = *std::min_element(baseVec.begin(),baseVec.end());
+//
+//        std::cout << "   - i: " << i << ", median: " << median << ", rms: " << rms << ", threshold: " << threshold << ", max/min/range: " << maxValue << "/" << minValue << "/" << maxValue-minValue << std::endl;
 
 //        threshold = std::min(threshold,float(12.));
+        float threshold = thresholdVec[i / grouping];
+
+        // make sure the roi vector is initialized
+        std::fill(roiItr[i].begin(),roiItr[i].end(),false);
 
         int lb(-2 * halfWidth);
 
@@ -773,15 +784,9 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
             size_t idxL(0);
             size_t idxU(0);
 
-// Temporarily removing the signal protection to study why this does not appear to be working correctly (TU 11/18/2021)
-//            for (size_t c=group_start; c<group_end; ++c) 
-//            {
-//                if (!selectValsItr[c][i]) v[idxV++] = filteredWaveformsItr[c][i];
-//            }
-
             for(size_t c = group_start; c < group_end; c++)
             {
-//                Temporarily removing the signal protection to study why this does not appear to be working correctly (TU 11/18/2021)
+                // Allow for signal protection?
 //                if (!selectValsItr[c][i])
 //                {
                     if (c < group_mid) vl[idxL++] = filteredWaveformsItr[c][i];
@@ -835,7 +840,7 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
                 // Otherwise, pick the one from the smallest range
                 else if (coreRangeL < coreRangeU) median = medianL;
                 else                              median = medianU;
-           }
+            }
                 
             // Add correction
             for (auto k=group_start; k<group_end; ++k) 

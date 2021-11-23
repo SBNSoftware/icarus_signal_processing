@@ -49,7 +49,7 @@ public:
     *
     *  @param Waveform  The waveform to process
     */
-    virtual void operator()(const Array2D<float>&, Array2D<float>&, Array2D<bool>&, Array2D<float>&, Array2D<float>&, Array2D<float>&, Array2D<float>&, Array2D<float>&) const = 0;
+    virtual void operator()(const Array2D<float>&, Array2D<float>&, Array2D<bool>&) const = 0;
 };
 
 
@@ -85,12 +85,7 @@ public:
     void operator()(
         const IROIFinder2D::Array2D<float>& waveform2D,
         IROIFinder2D::Array2D<float>&       fullEvent,
-        IROIFinder2D::Array2D<bool>&        outputROI,
-        IROIFinder2D::Array2D<float>&       waveLessCoherent,
-        IROIFinder2D::Array2D<float>&       medianVals,
-        IROIFinder2D::Array2D<float>&       coherentRMS,
-        IROIFinder2D::Array2D<float>&       morphedWaveform2D,
-        IROIFinder2D::Array2D<float>&       finalErosion2D) const override;
+        IROIFinder2D::Array2D<bool>&        outputROI) const override;
 
 private:
  /*   size_t             fFrequencyThreshold;
@@ -204,12 +199,7 @@ public:
     void operator()(
         const IROIFinder2D::Array2D<float>& waveform2D,
         IROIFinder2D::Array2D<float>&       fullEvent,
-        IROIFinder2D::Array2D<bool>&        outputROI,
-        IROIFinder2D::Array2D<float>&       waveLessCoherent,
-        IROIFinder2D::Array2D<float>&       medianVals,
-        IROIFinder2D::Array2D<float>&       coherentRMS,
-        IROIFinder2D::Array2D<float>&       morphedWaveform2D,
-        IROIFinder2D::Array2D<float>&       finalErosion2D) const override;
+        IROIFinder2D::Array2D<bool>&        outputROI) const override;
         
 private:
 //    const IMorphologicalFunctions2D* fMorphologyFilter;
