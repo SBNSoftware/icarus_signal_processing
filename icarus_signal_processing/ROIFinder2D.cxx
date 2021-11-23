@@ -245,9 +245,6 @@ icarus_signal_processing::ROICannyFilter::ROICannyFilter(const IFFTFilterFunctio
                                                          const float                highThreshold,
                                                          const unsigned int         BINARY_DILATION_SX,
                                                          const unsigned int         BINARY_DILATION_SY) :
-//                            fMorphologyFilter(morphologyFilter),
-                            fDenoising(denoising),
-                            // fBilateralFilter(bilateralFilter),
                             fEdgeDetector(edgeDetector),
                             fADFilter_SX(ADFILTER_SX),
                             fADFilter_SY(ADFILTER_SY),

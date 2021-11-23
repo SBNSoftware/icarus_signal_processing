@@ -202,10 +202,7 @@ public:
         IROIFinder2D::Array2D<bool>&        outputROI) const override;
         
 private:
-//    const IMorphologicalFunctions2D* fMorphologyFilter;
-    const IDenoiser2D*               fDenoising;
     std::unique_ptr<ImageFilters>    fImageFilter;    ///< The image filter 
- //   const BilateralFilters*          fBilateralFilter;
     const EdgeDetection*             fEdgeDetector;
 
     const unsigned int               fADFilter_SX;
