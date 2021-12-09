@@ -46,19 +46,19 @@ void Dilation1D::operator()(const Waveform<bool>& inputWaveform,
     const size_t paddingSize = (fStructuringElement - (N % fStructuringElement)) % fStructuringElement;
     const size_t bufferSize  = N + 2 * windowSize + paddingSize;
 
-    std::vector<bool> suffixArr(bufferSize);
-    std::vector<bool> prefixArr(bufferSize);
+    std::vector<bool> suffixArr(bufferSize,false);
+    std::vector<bool> prefixArr(bufferSize,false);
 
     // Padding Operations on Buffers
-    for (size_t i=0; i<windowSize; ++i) {
-        suffixArr[i] = false;
-        prefixArr[i] = false;
-    }
-
-    for (size_t i=N+windowSize; i<bufferSize; ++i) {
-        suffixArr[i] = false;
-        prefixArr[i] = false;
-    }
+//    for (size_t i=0; i<windowSize; ++i) {
+//        suffixArr[i] = false;
+//        prefixArr[i] = false;
+//    }
+//
+//    for (size_t i=N+windowSize; i<bufferSize; ++i) {
+//        suffixArr[i] = false;
+//        prefixArr[i] = false;
+//    }
 
     // Compute Prefix and Suffix Buffers
     // g_x 
@@ -161,19 +161,19 @@ template <typename T> void icarus_signal_processing::Dilation1D::getDilation(con
     const size_t paddingSize = (fStructuringElement - (N % fStructuringElement)) % fStructuringElement;
     const size_t bufferSize  = N + 2 * windowSize + paddingSize;
 
-    std::vector<T> suffixArr(bufferSize);
-    std::vector<T> prefixArr(bufferSize);
+    std::vector<T> suffixArr(bufferSize,std::numeric_limits<T>::min());
+    std::vector<T> prefixArr(bufferSize,std::numeric_limits<T>::min());
 
     // Padding Operations on Buffers
-    for (size_t i=0; i<windowSize; ++i) {
-        suffixArr[i] = std::numeric_limits<T>::min();
-        prefixArr[i] = std::numeric_limits<T>::min();
-    }
-
-    for (size_t i=N+windowSize; i<bufferSize; ++i) {
-        suffixArr[i] = std::numeric_limits<T>::min();
-        prefixArr[i] = std::numeric_limits<T>::min();
-    }
+//    for (size_t i=0; i<windowSize; ++i) {
+//        suffixArr[i] = std::numeric_limits<T>::min();
+//        prefixArr[i] = std::numeric_limits<T>::min();
+//    }
+//
+//    for (size_t i=N+windowSize; i<bufferSize; ++i) {
+//        suffixArr[i] = std::numeric_limits<T>::min();
+//        prefixArr[i] = std::numeric_limits<T>::min();
+//    }
 
   // g_x 
 
@@ -238,19 +238,19 @@ void Erosion1D::operator()(const Waveform<bool>& inputWaveform,
     const size_t paddingSize = (fStructuringElement - (N % fStructuringElement)) % fStructuringElement;
     const size_t bufferSize  = N + 2 * windowSize + paddingSize;
 
-    std::vector<bool> suffixArr(bufferSize);
-    std::vector<bool> prefixArr(bufferSize);
+    std::vector<bool> suffixArr(bufferSize,true);
+    std::vector<bool> prefixArr(bufferSize,true);
 
-    // Padding Operations on Buffers
-    for (size_t i=0; i<windowSize; ++i) {
-        suffixArr[i] = true;
-        prefixArr[i] = true;
-    }
-
-    for (size_t i=N+windowSize; i<bufferSize; ++i) {
-        suffixArr[i] = true;
-        prefixArr[i] = true;
-    }
+//    // Padding Operations on Buffers
+//    for (size_t i=0; i<windowSize; ++i) {
+//        suffixArr[i] = true;
+//        prefixArr[i] = true;
+//    }
+//
+//    for (size_t i=N+windowSize; i<bufferSize; ++i) {
+//        suffixArr[i] = true;
+//        prefixArr[i] = true;
+//    }
 
     // Compute Prefix and Suffix Buffers
     for (size_t i=0; i<N; ++i) {
@@ -341,19 +341,19 @@ template <typename T> void icarus_signal_processing::Erosion1D::getErosion(const
     const size_t paddingSize = (fStructuringElement - (N % fStructuringElement)) % fStructuringElement;
     const size_t bufferSize  = N + 2 * windowSize + paddingSize;
 
-    std::vector<T> suffixArr(bufferSize);
-    std::vector<T> prefixArr(bufferSize);
+    std::vector<T> suffixArr(bufferSize,std::numeric_limits<T>::max());
+    std::vector<T> prefixArr(bufferSize,std::numeric_limits<T>::max());
 
     // Padding Operations on Buffers
-    for (size_t i=0; i<windowSize; ++i) {
-        suffixArr[i] = std::numeric_limits<T>::max();
-        prefixArr[i] = std::numeric_limits<T>::max();
-    }
-
-    for (size_t i=N+windowSize; i<bufferSize; ++i) {
-        suffixArr[i] = std::numeric_limits<T>::max();
-        prefixArr[i] = std::numeric_limits<T>::max();
-    }
+//    for (size_t i=0; i<windowSize; ++i) {
+//        suffixArr[i] = std::numeric_limits<T>::max();
+//        prefixArr[i] = std::numeric_limits<T>::max();
+//    }
+//
+//    for (size_t i=N+windowSize; i<bufferSize; ++i) {
+//        suffixArr[i] = std::numeric_limits<T>::max();
+//        prefixArr[i] = std::numeric_limits<T>::max();
+//    }
 
     // Compute Prefix and Suffix Buffers
     for (size_t i=0; i<N; ++i) {
