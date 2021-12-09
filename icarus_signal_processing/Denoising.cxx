@@ -469,10 +469,11 @@ float icarus_signal_processing::Denoising::getIteratedMedian(std::vector<float>:
          median    = getMedian(vecBegin,vecEnd);
 
          // Make sure we don't have an infinite loop
-         int maxLoops = numBins / 4;
+//         int maxLoops = numBins / 4;
 
          // Try a refinement by tossing out the largest deviation (which will be at one of the two ends)
-         while(maxLoops-- && range > 2 * coreRange)
+//         while(maxLoops-- && range > 2 * coreRange)
+         while(std::distance(vecBegin,vecEnd) > 8 && range > 2 * coreRange)
          {
              // Which end is largest deviation? 
              if (median - *vecBegin > *(vecEnd-1) - median) vecBegin++;
@@ -761,8 +762,8 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
                                                               const unsigned int         grouping,
                                                               const unsigned int         groupingOffset) const
 {
-    auto nTicks  = filteredWaveformsItr->size();
-    size_t nGroups = ((int) numChannels - (int) groupingOffset) / grouping;
+    size_t nTicks  = filteredWaveformsItr->size();
+    size_t nGroups = (numChannels - groupingOffset) / grouping;   // Assuming numChannels > groupingOffset
 
     // get an instance of the waveform tools
     icarus_signal_processing::WaveformTools<float> waveformTools;
@@ -787,6 +788,8 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
             for(size_t c = group_start; c < group_end; c++)
             {
                 // Allow for signal protection?
+                // When subtracting in groups of 64 this does not seem to be working as one might expect
+                // So removing for now (12/6/2021)
 //                if (!selectValsItr[c][i])
 //                {
                     if (c < group_mid) vl[idxL++] = filteredWaveformsItr[c][i];
@@ -805,11 +808,16 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
 
                 if (idxL > 8)
                 {
-                    // Fill out the end of the vector
-                    std::fill(vl.begin()+idxL,vl.end(),*std::max_element(vl.begin(),vl.begin()+idxL));
+                    // Should we try smoothing? Triangle smoothing requires at least 5 bins
+                    if (idxL > 4) 
+                    {
+                        // Fill out the end of the vector
+                        if (idxL < vl.size()) std::fill(vl.begin()+idxL,vl.end(),*(vl.begin()+idxL));
 
-                    // Should we try smoothing?
-                    if (idxL > 3) waveformTools.triangleSmooth(vl,vl);
+                        VectorFloat tempVec = vl;
+
+                        waveformTools.triangleSmooth(tempVec,vl);
+                    }
 
                     medianL = getIteratedMedian(vl.begin(), vl.begin()+idxL, rangeL, coreRangeL);
                 }
@@ -820,11 +828,16 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
 
                 if (idxU > 8)
                 {
-                    // Fill out the end of the vector
-                    std::fill(vu.begin()+idxU,vu.end(),*std::max_element(vu.begin(),vu.begin()+idxU));
+                   // Should we try smoothing? Triangle smoothing requires at least 5 bins
+                    if (idxU > 4) 
+                    {
+                        // Fill out the end of the vector
+                        if (idxU < vu.size()) std::fill(vu.begin()+idxU,vu.end(),*(vl.begin()+idxU));
 
-                    // Should we try smoothing?
-                    if (idxU > 3) waveformTools.triangleSmooth(vu,vu);
+                        VectorFloat tempVec = vu;
+
+                         waveformTools.triangleSmooth(tempVec,vu);
+                    }
 
                     medianU = getIteratedMedian(vu.begin(), vu.begin()+idxU, rangeU, coreRangeU);
                 }
