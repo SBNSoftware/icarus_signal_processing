@@ -75,21 +75,31 @@ template <typename T>  inline WaveformTools<T>::WaveformTools(int minRange) :
 template <typename T>  inline void WaveformTools<T>::triangleSmooth(const std::vector<T>& inputVec, std::vector<T>& smoothVec, size_t lowestBin) const
 {
     if (inputVec.size() != smoothVec.size()) smoothVec.resize(inputVec.size());
-    
-    std::copy(inputVec.begin(), inputVec.begin() + 2 + lowestBin, smoothVec.begin());
-    std::copy(inputVec.end() - 2, inputVec.end(), smoothVec.end() - 2);
-    
-    typename std::vector<T>::iterator       curItr    = smoothVec.begin() + 2 + lowestBin;
-    typename std::vector<T>::const_iterator curInItr  = inputVec.begin() + 1 + lowestBin;
-    typename std::vector<T>::const_iterator stopInItr = inputVec.end()   - 2;
-    
-    while(curInItr++ != stopInItr)
+
+    if (inputVec.size() - lowestBin > 4)
     {
-        // Take the weighted average of five consecutive points centered on current point
-        T newVal = (*(curInItr - 2) + 2. * *(curInItr - 1) + 3. * *curInItr + 2. * *(curInItr + 1) + *(curInItr + 2)) / 9.;
-        
-        *curItr++ = newVal;
+        typename std::vector<T>::iterator       curOutItr = smoothVec.begin();
+        typename std::vector<T>::const_iterator curInItr  = inputVec.begin() + lowestBin;
+
+        // Handle the edge cases outside the loop
+        *curOutItr++ = (3. * *curInItr + 2. * *(curInItr + 1) + *(curInItr + 2)) / 6.;
+        curInItr++;
+        *curOutItr++ = (2. * *(curInItr - 1) + 3. * *curInItr + 2. * *(curInItr + 1) + *(curInItr + 2)) / 8.;
+
+        while(curInItr++ != inputVec.end() - 3)
+        {
+            // Take the weighted average of five consecutive points centered on current point
+            T newVal = (*(curInItr - 2) + 2. * *(curInItr - 1) + 3. * *curInItr + 2. * *(curInItr + 1) + *(curInItr + 2)) / 9.;
+
+            *curOutItr++ = newVal;
+        }
+
+        // Handle edge cases again
+        *curOutItr++ = (*(curInItr - 2) + 2. * *(curInItr - 1) + 3. * *curInItr + 2. * *(curInItr + 1)) / 8.;
+        curInItr++;
+        *curOutItr = (*(curInItr - 2) + 2. * *(curInItr - 1) + 3. * *curInItr) / 6.;
     }
+
     return;
 }
 
