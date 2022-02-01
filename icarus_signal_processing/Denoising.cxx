@@ -842,17 +842,24 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
                     medianU = getIteratedMedian(vu.begin(), vu.begin()+idxU, rangeU, coreRangeU);
                 }
 
-                // Generally, form the "median" as the weighted average between the two groups
-                if (abs(coreRangeL - coreRangeU) < 5) 
+                // Lots of special cases here... for example, if we have "ghost" channels in a grouop then the 
+                // range will be zero... so we want to avoid that if possible.
+                if (rangeU > 1. && rangeL > 1.)
                 {
-                    float weightL = 1./float(coreRangeL);
-                    float weightU = 1./float(coreRangeU);
+                    // Generally, form the "median" as the weighted average between the two groups
+                    if (abs(coreRangeL - coreRangeU) < 5) 
+                    {
+                        float weightL = 1./float(coreRangeL);
+                        float weightU = 1./float(coreRangeU);
 
-                    median = (weightL * medianL + weightU * medianU) / (weightL + weightU);
+                        median = (weightL * medianL + weightU * medianU) / (weightL + weightU);
+                    }
+                    // Otherwise, pick the one from the smallest range
+                    else if (coreRangeL < coreRangeU) median = medianL;
+                    else                              median = medianU;
                 }
-                // Otherwise, pick the one from the smallest range
-                else if (coreRangeL < coreRangeU) median = medianL;
-                else                              median = medianU;
+                else if (rangeU > 1.) median = medianU;
+                else                  median = medianL;
             }
                 
             // Add correction

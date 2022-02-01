@@ -281,8 +281,6 @@ void icarus_signal_processing::ROICannyFilter::operator()(const IROIFinder2D::Ar
     outputROI.resize(numChannels,std::vector<bool>(numTicks));
 
     // 2. Copy data to the output array
-    fullEvent.resize(numChannels,std::vector<float>(numTicks));
-
     for(size_t chanIdx = 0; chanIdx < numChannels; chanIdx++) std::copy(waveform2D[chanIdx].begin(),waveform2D[chanIdx].end(),fullEvent[chanIdx].begin());
 
     // 3. Apply the frequencyh high pass filters
