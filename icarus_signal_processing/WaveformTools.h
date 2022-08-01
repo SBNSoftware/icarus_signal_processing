@@ -24,6 +24,8 @@
 #include <fstream>
 #include <iomanip>
 
+#include <iostream>
+
 namespace icarus_signal_processing
 {
 
@@ -186,7 +188,8 @@ template <typename T> inline void WaveformTools<T>::getTruncatedMean(const std::
     // Try smoothing first to really find the baseline
     Waveform<T> waveform;
 
-    medianSmooth(waveformIn, waveform, 7);
+//    medianSmooth(waveformIn, waveform, 7);
+    waveform = waveformIn;
     
     // We need to get a reliable estimate of the mean and can't assume the input waveform will be ~zero mean...
     // Basic idea is to find the most probable value in the ROI presented to us
@@ -199,39 +202,53 @@ template <typename T> inline void WaveformTools<T>::getTruncatedMean(const std::
     int maxValInt = std::ceil(maxVal);
 
     range = maxValInt - minValInt + 1;
-    
-    std::vector<T> frequencyVec(range, 0);
-    int            mpCount(0);
-    int            mpVal(0);
-    
-    for(const auto& val : waveform)
+
+    if (range > 1)
     {
-        int intVal = std::round(val - minVal);
-        
-        frequencyVec[intVal]++;
-        
-        if (frequencyVec.at(intVal) > mpCount)
+        std::vector<T> frequencyVec(range, 0);
+        int            mpCount(0);
+        int            mpVal(0);
+
+        for(const auto& val : waveform)
         {
-            mpCount = frequencyVec[intVal];
-            mpVal   = intVal;
+            if (isnan(val))
+            {
+                std::cout << "getTruncatedMean finds nan for waveform val! waveform size: " << waveform.size() << " --> Skipping" << std::endl;
+                continue;
+            }
+
+            int intVal = std::max(std::min(int(std::round(val - minVal)),range-1),0);
+
+            frequencyVec[intVal]++;
+
+            if (frequencyVec[intVal] > mpCount)
+            {
+                mpCount = frequencyVec[intVal];
+                mpVal   = intVal;
+            }
         }
+
+        // take a weighted average of two neighbor bins
+        int meanSum  = 0;
+        int binRange = std::min(fMinRange, range/2+1);
+        int startVal = std::max(0,mpVal-binRange);
+        int stopVal  = std::min(range-1,mpVal+binRange);
+
+        nTrunc = 0;
+
+        for(int idx = startVal; idx <= stopVal; idx++)
+        {
+            meanSum += idx * frequencyVec[idx];
+            nTrunc  += frequencyVec[idx];
+        }
+
+        mean = T(meanSum) / T(nTrunc) + T(minVal);
     }
-    
-    // take a weighted average of two neighbor bins
-    int meanSum  = 0;
-    int binRange = std::min(fMinRange, range/2+1);
-    int startVal = std::max(0,mpVal-binRange);
-    int stopVal  = std::min(range-1,mpVal+binRange);
-    
-    nTrunc = 0;
-    
-    for(int idx = startVal; idx <= stopVal; idx++)
+    else
     {
-        meanSum += idx * frequencyVec[idx];
-        nTrunc  += frequencyVec[idx];
+        mean   = minVal;
+        nTrunc = waveform.size();
     }
-    
-    mean = T(meanSum) / T(nTrunc) + T(minVal);
     
     return;
 }
@@ -296,13 +313,14 @@ template <typename T>  inline void WaveformTools<T>::getPedestalCorrectedWavefor
     range  = std::floor(*minMaxValItr.first) - std::ceil(*minMaxValItr.second) + 1;
     nTrunc = inputWaveform.size();
 
-    getMedian(waveform, mean);
+//    getMedian(waveform, mean);
+    getTruncatedMean(inputWaveform,mean,nTrunc,range);
  
     // Do the pedestal correction
     std::transform(inputWaveform.begin(),inputWaveform.end(),outputWaveform.begin(),std::bind(std::minus<T>(),std::placeholders::_1,mean));
 
     // Now get the RMS values
-    getTruncatedRMS(outputWaveform, nSig, rmsFull, rmsTrunc, nTrunc);
+    getTruncatedRMS(inputWaveform, nSig, rmsFull, rmsTrunc, nTrunc);
 
     return;
 }

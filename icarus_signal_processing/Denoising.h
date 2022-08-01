@@ -59,6 +59,15 @@ public:
                              const unsigned int,
                              const unsigned int ) const;
 
+    void removeCoherentNoiseV2(ArrayFloat::iterator,
+                               ArrayFloat::const_iterator,
+                               ArrayFloat::iterator,
+                               ArrayBool::const_iterator,
+                               ArrayFloat::iterator,
+                               FilterFunctionVec::const_iterator,
+                               const unsigned int,
+                               const unsigned int ) const;
+
     void removeCoherentNoise(ArrayFloat::iterator,
                              ArrayFloat::const_iterator,
                              ArrayFloat::iterator,
@@ -159,6 +168,30 @@ class Denoiser1D_Ave : virtual public IDenoiser1D, public Denoising {
 public:
     /// Default constructor
     Denoiser1D_Ave(bool outputStats=false) : Denoising(outputStats), fOutputStats(outputStats) {}
+
+    void operator()(ArrayFloat::iterator,
+                    ArrayFloat::const_iterator,
+                    ArrayFloat::iterator,
+                    ArrayFloat::iterator,
+                    ArrayBool::iterator,
+                    ArrayBool::iterator,
+                    ArrayFloat::iterator,
+                    FilterFunctionVec::const_iterator,
+                    const VectorFloat&,
+                    const unsigned int,
+                    const unsigned int,
+                    const unsigned int,
+                    const unsigned int ) const override;
+
+private:
+    bool fOutputStats;
+
+};
+
+class Denoiser1D_Protect : virtual public IDenoiser1D, public Denoising {
+public:
+    /// Default constructor
+    Denoiser1D_Protect(bool outputStats=false) : Denoising(outputStats), fOutputStats(outputStats) {}
 
     void operator()(ArrayFloat::iterator,
                     ArrayFloat::const_iterator,
