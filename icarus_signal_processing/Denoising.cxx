@@ -906,7 +906,7 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
 
                 // Lots of special cases here... for example, if we have "ghost" channels in a grouop then the 
                 // range will be zero... so we want to avoid that if possible.
-                if (rangeU > 1. && rangeL > 1.)
+                if (coreRangeU > 1. && coreRangeL > 1.)
                 {
                     // Generally, form the "median" as the weighted average between the two groups
                     if (abs(coreRangeL - coreRangeU) < 5) 
