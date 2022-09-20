@@ -127,7 +127,7 @@ template <typename T>  inline void WaveformTools<T>::medianSmooth(const Waveform
     std::copy(startItr, startItr + nBins/2, smoothVec.begin());
 
     // Nor are the last
-    std::copy(stopItr - nBins/2, stopItr, smoothVec.end() - nBins/2);
+    std::copy(inputVec.end() - nBins/2, inputVec.end(), smoothVec.end() - nBins/2);
     
     while(std::distance(startItr,stopItr) > 0)
     {
@@ -142,7 +142,7 @@ template <typename T>  inline void WaveformTools<T>::medianSmooth(const Waveform
     }
     
     // Last bins are not smoothed
-    std::copy(startItr + medianBin, inputVec.end(), smoothVec.begin() + smoothBin);
+//    std::copy(startItr + medianBin, inputVec.end(), smoothVec.begin() + smoothBin);
     
     return;
 }
@@ -209,11 +209,14 @@ template <typename T> inline void WaveformTools<T>::getTruncatedMean(const std::
         int            mpCount(0);
         int            mpVal(0);
 
-        for(const auto& val : waveform)
+        //for(const auto& val : waveform)
+        for(size_t waveIdx=0; waveIdx<waveform.size(); waveIdx++)
         {
+            T val = waveform[waveIdx];
+
             if (isnan(val))
             {
-                std::cout << "getTruncatedMean finds nan for waveform val! waveform size: " << waveform.size() << " --> Skipping" << std::endl;
+                std::cout << "getTruncatedMean finds nan for waveform val! waveform size: " << waveform.size() << ", idx:" << waveIdx << " --> Skipping" << std::endl;
                 continue;
             }
 
@@ -311,10 +314,10 @@ template <typename T>  inline void WaveformTools<T>::getPedestalCorrectedWavefor
     std::pair<typename Waveform<T>::const_iterator,typename Waveform<T>::const_iterator> minMaxValItr = std::minmax_element(waveform.begin(),waveform.end());
 
     range  = std::floor(*minMaxValItr.first) - std::ceil(*minMaxValItr.second) + 1;
-    nTrunc = inputWaveform.size();
+    nTrunc = waveform.size();
 
 //    getMedian(waveform, mean);
-    getTruncatedMean(inputWaveform,mean,nTrunc,range);
+    getTruncatedMean(waveform,mean,nTrunc,range);
  
     // Do the pedestal correction
     std::transform(inputWaveform.begin(),inputWaveform.end(),outputWaveform.begin(),std::bind(std::minus<T>(),std::placeholders::_1,mean));
