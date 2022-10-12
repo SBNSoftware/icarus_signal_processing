@@ -15,7 +15,7 @@
 
 cmake_minimum_required(VERSION 3.19 FATAL_ERROR)
 
-project(icarus_signal_processing VERSION 09.56.00 LANGUAGES CXX)
+project(icarus_signal_processing VERSION 09.60.00 LANGUAGES CXX)
 
 # cetbuildtools contains our cmake modules
 find_package(cetbuildtools REQUIRED)
