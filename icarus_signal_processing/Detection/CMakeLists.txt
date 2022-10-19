@@ -1,12 +1,12 @@
 
-cet_make( 
+cet_make(  ### MIGRATE-ACTION-RECOMMENDED: use cet_make_library(), build_dictionary(), basic_plugin() with explicit source lists
           LIBRARIES 
                           icarus_signal_processing_Filters
-                          ${ROOT_GEOM}
-                          ${ROOT_XMLIO}
-                          ${ROOT_GDML}
-                          ${ROOT_FFTW}
-                          ${ROOT_BASIC_LIB_LIST}
+                          ROOT::Geom
+                          ROOT::XMLIO
+                          ROOT::Gdml
+                          ROOT::FFTW
+                          ROOT::Core
        )
 
 install_headers()
