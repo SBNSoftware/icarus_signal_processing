@@ -1,9 +1,13 @@
 add_definitions(-DEIGEN_FFTW_DEFAULT)
-include_directories(${FFTW3_INCLUDE_DIRS})
-link_directories(${FFTW3_LIBRARY_DIRS})
-cet_make(  ### MIGRATE-ACTION-RECOMMENDED: use cet_make_library(), build_dictionary(), basic_plugin() with explicit source lists
-          LIBRARIES 
-                          ${ICARUS_FFTW_LIBRARIES}
+FILE(GLOB src_files *.cxx)
+
+cet_make_library(
+          SOURCE ${src_files}
+          LIBRARIES
+                          PkgConfig::FFTW3F
+                          PkgConfig::FFTW3
+                          PkgConfig::FFTW3L
+                          PkgConfig::FFTW3Q
                           ROOT::Geom
                           ROOT::XMLIO
                           ROOT::Gdml

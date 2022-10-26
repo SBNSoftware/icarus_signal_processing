@@ -31,15 +31,16 @@ cet_set_compiler_flags(DIAGS CAUTIOUS
 cet_report_compiler_flags(REPORT_THRESHOLD VERBOSE)
 
 # these are minimum required versions, not the actual product versions
-find_package( PkgConfig REQUIRED)
 find_package( ROOT )
+find_package( Eigen3 )
 # macros for dictionary and simple_plugin
 include(CetMake)
 
-# add cet_find_library commands here when needed
-
-pkg_search_module(FFTW3 REQUIRED IMPORTED_TARGET GLOBAL fftw3f fftw3 fftw3q fftw3l fftw3_threads fftw3f_threeads fftw3q_threads)
-set(ICARUS_FFTW_LIBRARIES PkgConfig::FFTW3)
+find_package( PkgConfig REQUIRED)
+pkg_search_module(FFTW3 REQUIRED IMPORTED_TARGET GLOBAL fftw3)
+pkg_search_module(FFTW3F REQUIRED IMPORTED_TARGET GLOBAL fftw3f)
+pkg_search_module(FFTW3L REQUIRED IMPORTED_TARGET GLOBAL fftw3l)
+pkg_search_module(FFTW3Q REQUIRED IMPORTED_TARGET GLOBAL fftw3q)
 
 # ADD SOURCE CODE SUBDIRECTORIES HERE
 add_subdirectory(icarus_signal_processing)

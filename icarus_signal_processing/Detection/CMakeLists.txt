@@ -1,6 +1,8 @@
 
-cet_make(  ### MIGRATE-ACTION-RECOMMENDED: use cet_make_library(), build_dictionary(), basic_plugin() with explicit source lists
-          LIBRARIES 
+FILE(GLOB src_files *.cxx)
+cet_make_library(
+          SOURCE ${src_files}
+          LIBRARIES
                           icarus_signal_processing_Filters
                           ROOT::Geom
                           ROOT::XMLIO
