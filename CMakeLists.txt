@@ -11,7 +11,8 @@
 #  make install
 #  make package (builds distribution tarfile)
 # ======================================================================
-cmake_minimum_required(VERSION 3.19 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
+# cmake_policy(VERSION 3.19)
 
 
 find_package(cetmodules 2.25.05 REQUIRED)

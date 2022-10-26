@@ -1,4 +1,3 @@
-add_definitions(-DEIGEN_FFTW_DEFAULT)
 FILE(GLOB src_files *.cxx)
 
 cet_make_library(
@@ -14,6 +13,8 @@ cet_make_library(
                           ROOT::FFTW
                           ROOT::Core
        )
+
+target_compile_definitions(icarus_signal_processing_Filters INTERFACE EIGEN_FFTW_DEFAULT)
 
 install_headers()
 install_fhicl()
