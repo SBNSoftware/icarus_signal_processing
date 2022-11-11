@@ -11,18 +11,13 @@
 #  make install
 #  make package (builds distribution tarfile)
 # ======================================================================
+cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
+# cmake_policy(VERSION 3.19)
 
 
-cmake_minimum_required(VERSION 3.19 FATAL_ERROR)
+find_package(cetmodules 2.25.05 REQUIRED)
 
-project(icarus_signal_processing VERSION 09.60.01 LANGUAGES CXX)
-
-# cetbuildtools contains our cmake modules
-find_package(cetbuildtools REQUIRED)
-
-list(APPEND CMAKE_MODULE_PATH
-#     ${CMAKE_CURRENT_SOURCE_DIR}/Modules
-)
+project(icarus_signal_processing VERSION 09.62.00.02 LANGUAGES CXX)
 
 include(CetCMakeEnv)
 cet_cmake_env()
@@ -34,23 +29,19 @@ cet_set_compiler_flags(DIAGS CAUTIOUS
   EXTRA_CXX_FLAGS -Wno-unused-local-typedefs
 )
 
-cet_report_compiler_flags()
+cet_report_compiler_flags(REPORT_THRESHOLD VERBOSE)
 
 # these are minimum required versions, not the actual product versions
-find_ups_product( fftw )
-
+find_package( ROOT )
+find_package( Eigen3 )
 # macros for dictionary and simple_plugin
 include(CetMake)
 
-# add cet_find_library commands here when needed
-
-##cet_find_library(FFTW_LIBRARY NAMES fftw3f fftw3 fftw3q fftw3l fftw3_threads fftw3f_threads fftw3q_threads PATHS $ENV{FFTW_LIBRARY} )
-cet_find_library(ICARUS_FFTW3_LIBRARY  NAMES fftw3  PATHS ENV FFTW_LIBRARY NO_DEFAULT_PATH )
-cet_find_library(ICARUS_FFTW3F_LIBRARY NAMES fftw3f PATHS ENV FFTW_LIBRARY NO_DEFAULT_PATH )
-cet_find_library(ICARUS_FFTW3L_LIBRARY NAMES fftw3l PATHS ENV FFTW_LIBRARY NO_DEFAULT_PATH )
-cet_find_library(ICARUS_FFTW3Q_LIBRARY NAMES fftw3q PATHS ENV FFTW_LIBRARY NO_DEFAULT_PATH )
-set(ICARUS_FFTW_LIBRARIES ICARUS_FFTW3_LIBRARY ICARUS_FFTW3F_LIBRARY ICARUS_FFTW3L_LIBRARY ICARUS_FFTW3Q_LIBRARY)
-include_directories( $ENV{EIGEN_INC} )
+find_package( PkgConfig REQUIRED)
+pkg_search_module(FFTW3 REQUIRED IMPORTED_TARGET GLOBAL fftw3)
+pkg_search_module(FFTW3F REQUIRED IMPORTED_TARGET GLOBAL fftw3f)
+pkg_search_module(FFTW3L REQUIRED IMPORTED_TARGET GLOBAL fftw3l)
+pkg_search_module(FFTW3Q REQUIRED IMPORTED_TARGET GLOBAL fftw3q)
 
 # ADD SOURCE CODE SUBDIRECTORIES HERE
 add_subdirectory(icarus_signal_processing)
@@ -60,7 +51,6 @@ add_subdirectory(test)
 
 # ups - table and config files
 # must be AFTER all other subdirectories
-add_subdirectory(ups)
 
 # packaging utility - must be last
-include(UseCPack)
+cet_cmake_config()

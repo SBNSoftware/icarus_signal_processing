@@ -1,14 +1,20 @@
-add_definitions(-DEIGEN_FFTW_DEFAULT)
+FILE(GLOB src_files *.cxx)
 
-cet_make( 
-          LIBRARIES 
-                          ${ICARUS_FFTW_LIBRARIES}
-                          ${ROOT_GEOM}
-                          ${ROOT_XMLIO}
-                          ${ROOT_GDML}
-                          ${ROOT_FFTW}
-                          ${ROOT_BASIC_LIB_LIST}
+cet_make_library(
+          SOURCE ${src_files}
+          LIBRARIES
+                          PkgConfig::FFTW3F
+                          PkgConfig::FFTW3
+                          PkgConfig::FFTW3L
+                          PkgConfig::FFTW3Q
+                          ROOT::Geom
+                          ROOT::XMLIO
+                          ROOT::Gdml
+                          ROOT::FFTW
+                          ROOT::Core
        )
+
+target_compile_definitions(icarus_signal_processing_Filters INTERFACE EIGEN_FFTW_DEFAULT)
 
 install_headers()
 install_fhicl()

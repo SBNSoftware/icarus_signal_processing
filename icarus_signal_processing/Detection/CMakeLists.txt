@@ -1,12 +1,14 @@
 
-cet_make( 
-          LIBRARIES 
+FILE(GLOB src_files *.cxx)
+cet_make_library(
+          SOURCE ${src_files}
+          LIBRARIES
                           icarus_signal_processing_Filters
-                          ${ROOT_GEOM}
-                          ${ROOT_XMLIO}
-                          ${ROOT_GDML}
-                          ${ROOT_FFTW}
-                          ${ROOT_BASIC_LIB_LIST}
+                          ROOT::Geom
+                          ROOT::XMLIO
+                          ROOT::Gdml
+                          ROOT::FFTW
+                          ROOT::Core
        )
 
 install_headers()
