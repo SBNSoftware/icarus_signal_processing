@@ -323,7 +323,7 @@ template <typename T>  inline void WaveformTools<T>::getPedestalCorrectedWavefor
     std::transform(inputWaveform.begin(),inputWaveform.end(),outputWaveform.begin(),std::bind(std::minus<T>(),std::placeholders::_1,mean));
 
     // Now get the RMS values
-    getTruncatedRMS(inputWaveform, nSig, rmsFull, rmsTrunc, nTrunc);
+    getTruncatedRMS(outputWaveform, nSig, rmsFull, rmsTrunc, nTrunc);
 
     return;
 }
