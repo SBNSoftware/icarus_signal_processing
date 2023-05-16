@@ -250,7 +250,7 @@ libdir	fq_dir		lib
 ####################################
 product		version		qual	flags		<table_format=2>
 fftw		v3_3_9		-
-root		v6_22_08d	-
+root		v6_26_06a	-
 cetmodules	v3_20_00	-	only_for_build
 end_product_list
 ####################################
