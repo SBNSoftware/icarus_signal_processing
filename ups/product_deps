@@ -307,10 +307,12 @@ end_product_list
 #
 ####################################
 qualifier	root		fftw	notes
+c14:debug	c14:p3913:debug	-nq-
+c14:prof	c14:p3913:prof	-nq-
 c7:debug	c7:p3913:debug	-nq-
 c7:prof		c7:p3913:prof	-nq-
-e19:debug	e19:p3913:debug	-nq-
-e19:prof	e19:p3913:prof	-nq-
+e26:debug	e26:p3913:debug	-nq-
+e26:prof	e26:p3913:prof	-nq-
 e20:debug	e20:p3913:debug	-nq-
 e20:prof	e20:p3913:prof	-nq-
 end_qualifier_list
