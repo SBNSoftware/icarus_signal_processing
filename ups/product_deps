@@ -87,7 +87,7 @@
 #>  define_pythonpath
 ####################################
 parent		icarus_signal_processing
-defaultqual	e19
+defaultqual	e20
 ####################################
 
 ####################################
