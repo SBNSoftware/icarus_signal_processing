@@ -40,8 +40,10 @@ public:
     using PeakTuple    = std::tuple<size_t,size_t,size_t>;   // first bin, peak bin, last bin
     using PeakTupleVec = std::vector<PeakTuple>;             // The collection of candidate peaks
 
-    void triangleSmooth(const Waveform<T>&, Waveform<T>&, size_t = 0)                                        const;
-    void medianSmooth(  const Waveform<T>&, Waveform<T>&, size_t = 3)                                        const;
+    void triangleSmooth( const Waveform<T>&, Waveform<T>&, size_t = 0)                                       const;
+    void medianSmooth(   const Waveform<T>&, Waveform<T>&, size_t = 3)                                       const;
+    void averageSmooth(  const Waveform<T>&, Waveform<T>&, size_t = 3)                                       const;
+    void truncAveSmooth( const Waveform<T>&, Waveform<T>&, size_t = 3)                                       const;
     void firstDerivative(const Waveform<T>&,  Waveform<T>&)                                                  const;
     void findPeaks(typename Waveform<T>::iterator, typename Waveform<T>::iterator, PeakTupleVec&, T, size_t) const;
 
@@ -53,6 +55,8 @@ public:
                                              Waveform<T>&) const;
 
     void getOpeningAndClosing(const Waveform<T>&,  const Waveform<T>&,  int, Waveform<T>&,  Waveform<T>&)  const;
+
+    void getMedian(typename Waveform<T>::iterator, typename Waveform<T>::iterator, T&)                     const;
 
     void getMedian(const Waveform<T>&, T&)                                                                 const;
     void getTruncatedMean(const Waveform<T>&, T&, int&, int&)                                              const;
@@ -114,38 +118,125 @@ template <typename T>  inline void WaveformTools<T>::medianSmooth(const Waveform
     if (inputVec.size() != smoothVec.size()) smoothVec.resize(inputVec.size());
     
     // Basic set up
-    typename std::vector<T> medianVec(nBins);
-    typename std::vector<T>::const_iterator startItr = inputVec.begin();
-    typename std::vector<T>::const_iterator stopItr  = startItr;
-    
-    std::advance(stopItr, inputVec.size() - nBins);
-    
-    size_t medianBin = nBins/2;
-    size_t smoothBin = medianBin;
-    
-    // First bins are not smoothed
-    std::copy(startItr, startItr + nBins/2, smoothVec.begin());
+    typename Waveform<T>::const_iterator medianBinItr = inputVec.begin();
+    typename Waveform<T>::const_iterator stopItr      = inputVec.end();
 
-    // Nor are the last
-    std::copy(inputVec.end() - nBins/2, inputVec.end(), smoothVec.end() - nBins/2);
+    size_t smoothBin(0);
+
+    Waveform<T> medianVec(nBins);
     
-    while(std::distance(startItr,stopItr) > 0)
+    while(std::distance(medianBinItr,stopItr) > 0)
     {
-        std::copy(startItr,startItr+nBins,medianVec.begin());
-        std::nth_element(medianVec.begin(),medianVec.begin() + medianBin, medianVec.end());
-        
-        T medianVal = medianVec[medianBin];
+        size_t lowBins = std::min(nBins/2,size_t(std::distance(inputVec.begin(),medianBinItr)));
+        size_t hiBins  = std::min(nBins/2,size_t(std::distance(medianBinItr,inputVec.end())));
+
+        typename Waveform<T>::const_iterator startItr = medianBinItr - lowBins;
+        typename Waveform<T>::const_iterator endItr   = medianBinItr + hiBins;
+
+        std::copy(startItr, endItr, medianVec.begin());
+
+        T medianVal = T(0);
+
+        getMedian(medianVec.begin(),medianVec.begin()+std::distance(startItr,endItr),medianVal);
         
         smoothVec[smoothBin++] = medianVal;
         
-        startItr++;
+        medianBinItr++;
     }
-    
-    // Last bins are not smoothed
-//    std::copy(startItr + medianBin, inputVec.end(), smoothVec.begin() + smoothBin);
     
     return;
 }
+
+template <typename T>  inline void WaveformTools<T>::averageSmooth(const Waveform<T>& inputVec, Waveform<T>& smoothVec, size_t nBins) const
+{
+    // Make sure the input vector is right sized
+    if (inputVec.size() != smoothVec.size()) smoothVec.resize(inputVec.size());
+    
+    // Basic set up
+    typename Waveform<T>::const_iterator currentBinItr = inputVec.begin();
+    typename Waveform<T>::const_iterator stopItr       = inputVec.end();
+
+    size_t smoothBin(0);
+    
+    while(std::distance(currentBinItr,stopItr) > 0)
+    {
+        size_t lowBins = std::min(nBins/2,size_t(std::distance(inputVec.begin(),currentBinItr)));
+        size_t hiBins  = std::min(nBins/2,size_t(std::distance(currentBinItr,inputVec.end())));
+
+        typename Waveform<T>::const_iterator startItr = currentBinItr - lowBins;
+        typename Waveform<T>::const_iterator endItr   = currentBinItr + hiBins;
+        
+        smoothVec[smoothBin++] = std::accumulate(startItr,endItr,T(0)) / T(std::distance(startItr,endItr));
+        
+        currentBinItr++;
+    }
+    
+    return;
+}
+
+template <typename T>  inline void WaveformTools<T>::truncAveSmooth(const Waveform<T>& inputVec, Waveform<T>& smoothVec, size_t nBins) const
+{
+    // Make sure the input vector is right sized
+    if (inputVec.size() != smoothVec.size()) smoothVec.resize(inputVec.size());
+    
+    // Basic set up
+    typename Waveform<T>::const_iterator currentBinItr = inputVec.begin();
+    typename Waveform<T>::const_iterator stopItr       = inputVec.end();
+
+    size_t smoothBin(0);
+    
+    while(std::distance(currentBinItr,stopItr) > 0)
+    {
+        size_t lowBins = std::min(nBins/2,size_t(std::distance(inputVec.begin(),currentBinItr)));
+        size_t hiBins  = std::min(nBins/2,size_t(std::distance(currentBinItr,inputVec.end())));
+
+        Waveform<T> locWaveform(currentBinItr - lowBins, currentBinItr + hiBins);
+        
+        T    truncMean;
+        int  nTrunc;
+        int  range;
+
+        getTruncatedMean(locWaveform, truncMean, nTrunc, range);
+
+        smoothVec[smoothBin++] = truncMean;
+        
+        currentBinItr++;
+    }
+    
+    return;
+}
+
+template <typename T> inline void WaveformTools<T>::getMedian(typename Waveform<T>::iterator startItr, 
+                                                              typename Waveform<T>::iterator stopItr, 
+                                                              T&                             median)  const
+{
+    median = T(0);
+
+    size_t nVals = std::distance(startItr,stopItr);
+
+    if (nVals > 1)
+    {
+        size_t middleElem = nVals / 2;
+
+        // Processing slightly different depending on whether even or odd number of values
+        if (nVals % 2 == 0)
+        {
+            std::nth_element(startItr, startItr + middleElem,     stopItr);
+            std::nth_element(startItr, startItr + middleElem - 1, stopItr);
+
+            median = (*(startItr + middleElem) + *(startItr + middleElem - 1)) / 2.;
+        }
+        else
+        {
+            std::nth_element(startItr, startItr + middleElem, stopItr);
+
+            median = *(startItr + middleElem);
+        }
+    }
+
+    return;
+}
+
 
 template <typename T> inline void WaveformTools<T>::getMedian(const Waveform<T>& waveformIn, T& median) const
 {
