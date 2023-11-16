@@ -20,6 +20,13 @@
 #include <cmath>
 #include <complex>
 
+// Eigen includes
+#include "Eigen/Core"
+#include "Eigen/Dense"
+#include "Eigen/Eigenvalues"
+#include "Eigen/Geometry"
+#include "Eigen/Jacobi"
+
 #include <functional>
 #include <fstream>
 #include <iomanip>
@@ -29,7 +36,9 @@
 namespace icarus_signal_processing
 {
 
-template <class T> using Waveform = std::vector<T>;
+template <class T> using Waveform   = std::vector<T>;
+template <class T> using WavePoint  = Eigen::Vector<T,2>;
+template <class T> using PointCloud = std::vector<WavePoint<T>>;
 
 template <class T> class WaveformTools
 {
@@ -40,12 +49,19 @@ public:
     using PeakTuple    = std::tuple<size_t,size_t,size_t>;   // first bin, peak bin, last bin
     using PeakTupleVec = std::vector<PeakTuple>;             // The collection of candidate peaks
 
-    void triangleSmooth( const Waveform<T>&, Waveform<T>&, size_t = 0)                                       const;
-    void medianSmooth(   const Waveform<T>&, Waveform<T>&, size_t = 3)                                       const;
-    void averageSmooth(  const Waveform<T>&, Waveform<T>&, size_t = 3)                                       const;
-    void truncAveSmooth( const Waveform<T>&, Waveform<T>&, size_t = 3)                                       const;
-    void firstDerivative(const Waveform<T>&,  Waveform<T>&)                                                  const;
-    void findPeaks(typename Waveform<T>::iterator, typename Waveform<T>::iterator, PeakTupleVec&, T, size_t) const;
+    void triangleSmooth(     const Waveform<T>&, Waveform<T>&, size_t = 0)                                                                   const;
+    void medianSmooth(       const Waveform<T>&, Waveform<T>&, size_t = 3)                                                                   const;
+    void averageSmooth(      const Waveform<T>&, Waveform<T>&, size_t = 3)                                                                   const;
+    void truncAveSmooth(     const Waveform<T>&, Waveform<T>&, size_t = 3)                                                                   const;
+    void principalComponents(Waveform<T>&, Eigen::Vector<T,2>&, Eigen::Matrix<T,2,2>&, Eigen::Vector<T,2>&, T = T(6), T = T(3), bool = true) const;
+    void principalComponents(PointCloud<T>&, 
+                             Eigen::Vector<T,2>&, 
+                             Eigen::Matrix<T,2,2>&, 
+                             Eigen::Vector<T,2>&, 
+                             T = T(6), T = T(3), 
+                             bool = true) const;
+    void firstDerivative(    const Waveform<T>&,  Waveform<T>&)                                                                              const;
+    void findPeaks(typename Waveform<T>::iterator, typename Waveform<T>::iterator, PeakTupleVec&, T, size_t)                                 const;
 
     void getErosionDilationAverageDifference(const Waveform<T>&,
                                              int,
@@ -58,6 +74,7 @@ public:
 
     void getMedian(typename Waveform<T>::iterator, typename Waveform<T>::iterator, T&)                     const;
 
+    void getMedian(const PointCloud<T>&, WavePoint<T>&)                                                    const;
     void getMedian(const Waveform<T>&, T&)                                                                 const;
     void getTruncatedMean(const Waveform<T>&, T&, int&, int&)                                              const;
     void getTruncatedRMS(const Waveform<T>&, T, T&, T&, int&)                                              const;
@@ -65,7 +82,8 @@ public:
     void getPedestalCorrectedWaveform(const Waveform<T>&, Waveform<T>&, T, T&, T&, T&, int&, int&)         const;
    
 private:
-
+    bool computePCA(PointCloud<T>&, Eigen::Vector<T,2>&, Eigen::Matrix<T,2,2>&, Eigen::Vector<T,2>&, T&)     const;
+ 
     int fMinRange;              //< Minimum range to use when calculating the mean
 };
 
@@ -238,6 +256,24 @@ template <typename T> inline void WaveformTools<T>::getMedian(typename Waveform<
 }
 
 
+template <typename T> inline void WaveformTools<T>::getMedian(const PointCloud<T>& waveformIn, WavePoint<T>& median) const
+{
+    // We need to make to "Waveform<T>" objects and get median. 
+    Waveform<T> firstVec(waveformIn.size());
+    Waveform<T> secondVec(waveformIn.size());
+
+    for(size_t idx = 0; idx < waveformIn.size(); idx++)
+    {
+        firstVec[idx]  = waveformIn[idx][0];
+        secondVec[idx] = waveformIn[idx][1];
+    }
+
+    getMedian(firstVec,median.first);
+    getMedian(secondVec,median.second);
+
+    return;
+}
+
 template <typename T> inline void WaveformTools<T>::getMedian(const Waveform<T>& waveformIn, T& median) const
 {
     median = T(0);
@@ -384,6 +420,157 @@ template <typename T>  inline void WaveformTools<T>::getTruncatedMeanRMS(const s
     return;
 }
 
+
+template <typename T> inline void WaveformTools<T>::principalComponents(std::vector<T>&       waveform, 
+                                                                        Eigen::Vector<T,2>&   meanPos,  
+                                                                        Eigen::Matrix<T,2,2>& eigenVectors,
+                                                                        Eigen::Vector<T,2>&   eigenValues,
+                                                                        T                     adcLimit,
+                                                                        T                     nEigenVals,
+                                                                        bool                  correctBaseline) const
+{
+    // Assume we have an input waveform with continuous indices from 0 to size of waveform
+    // Step one is to convert to a point cloud
+    PointCloud<T> pointCloud(waveform.size());
+
+    for(size_t idx = 0; idx < waveform.size(); idx++) pointCloud[idx] = WavePoint<T>(T(idx),waveform[idx]);
+
+    // Now call function to do PCA
+    principalComponents(pointCloud, meanPos, eigenVectors, eigenValues, adcLimit, nEigenVals, correctBaseline);
+
+    // If correcting the baseline then copy back to output
+    if (correctBaseline) 
+        for(size_t idx = 0; idx < waveform.size(); idx++) waveform[idx] = pointCloud[idx][1];
+
+    return;
+}
+
+template <typename T> inline void WaveformTools<T>::principalComponents(PointCloud<T>&        pointCloud, 
+                                                                        Eigen::Vector<T,2>&   meanPos,  
+                                                                        Eigen::Matrix<T,2,2>& eigenVectors,
+                                                                        Eigen::Vector<T,2>&   eigenValues,
+                                                                        T                     adcLimit,
+                                                                        T                     nEigenVals,
+                                                                        bool                  correctBaseline) const
+{
+    // For first computation insure all ADC values are considered
+    T maxADCVal = 5000.;
+
+    if (computePCA(pointCloud, meanPos, eigenVectors, eigenValues, maxADCVal)) 
+    {
+        // Should we refine to make sure we get a straight baseline?
+        if (std::sqrt(eigenValues(0)) > adcLimit)
+        {
+            maxADCVal = nEigenVals * std::sqrt(eigenValues(0));
+
+            // Note that if the calculation "fails" then you will have the original eigenvectors and values
+            computePCA(pointCloud, meanPos, eigenVectors, eigenValues, maxADCVal);
+        }
+        
+        // Correct the baseline?
+        if (correctBaseline)
+        {
+            T yVelocity = eigenVectors.row(1)[1];
+
+            for(size_t idx = 0; idx < pointCloud.size(); idx++)
+            {
+                T adcCorrection = meanPos[1] + (pointCloud[idx][0] - meanPos[0]) * yVelocity;
+
+                pointCloud[idx][1] -= adcCorrection;
+            }
+        }
+    }
+
+    return;
+}
+
+template <typename T>  inline bool WaveformTools<T>::computePCA(PointCloud<T>&        pointCloud,
+                                                                Eigen::Vector<T,2>&   meanPos,  
+                                                                Eigen::Matrix<T,2,2>& eigenVectors,
+                                                                Eigen::Vector<T,2>&   eigenValues,
+                                                                T&                    maxADCVal) const
+{
+    bool goodPCA(false);
+
+    T    yVelocity = eigenVectors.row(1)[1];
+
+    // Start by computing the mean position
+    // If the maxADCVal is large then we are not going to reject outliers so this is a simple accumulate
+    if (maxADCVal > 1000.)
+    {
+        // Function to accumulate
+        auto pointCloudAdd = [](WavePoint<T> sum, WavePoint<T> val) {sum[0] += val[0]; sum[1] += val[1]; return sum;};
+
+        WavePoint<T> meanVal = std::accumulate(pointCloud.begin(),pointCloud.end(),WavePoint<T>(0,0),pointCloudAdd);
+
+        meanVal[0] /= T(pointCloud.size());
+        meanVal[1] /= T(pointCloud.size());
+
+        meanPos = Eigen::Vector<T,2>(meanVal[0], meanVal[1]);
+    }
+    // Otherwise we do not want to include rejected points in the computation
+    else
+    {
+        WavePoint<T> meanSum(0,0);
+        int          nADCVals(0);
+
+        for(size_t waveIdx =0; waveIdx < pointCloud.size(); waveIdx++)
+        {
+            T x = pointCloud[waveIdx][0] - meanPos(0);
+            T y = pointCloud[waveIdx][1] - meanPos(1);
+
+            if (abs(y - x*yVelocity) > maxADCVal) continue;
+
+            meanSum[0] += pointCloud[waveIdx][0];
+            meanSum[1] += pointCloud[waveIdx][1];
+            nADCVals++;
+        }
+
+        meanPos = Eigen::Vector<T,2>(meanSum[0]/T(nADCVals),meanSum[1]/T(nADCVals));
+    }
+
+    // Define elements of our covariance matrix
+    T xi2(0.);
+    T xiyi(0.);
+    T yi2(0.0);
+
+    // Reset counter
+    int nADCVals(0);
+
+    for (size_t waveIdx = 0; waveIdx < pointCloud.size(); waveIdx++)
+    {
+        T x = pointCloud[waveIdx][0] - meanPos(0);
+        T y = pointCloud[waveIdx][1] - meanPos(1);
+
+        if (abs(y - x*yVelocity) > maxADCVal) continue;
+
+        nADCVals++;
+
+        xi2  += x * x;
+        xiyi += x * y;
+        yi2  += y * y;
+    }
+
+    // Using Eigen package
+    Eigen::Matrix<T,2,2> sig;
+
+    sig << xi2, xiyi, xiyi, yi2;
+
+    sig *= 1./(T(nADCVals-1));
+
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix<T,2,2>> eigenMat(sig);
+
+    if (eigenMat.info() == Eigen::ComputationInfo::Success) 
+    {
+        // Now copy output
+        eigenVectors = eigenMat.eigenvectors().transpose();
+        eigenValues  = eigenMat.eigenvalues();
+
+        goodPCA = true;
+    }
+
+    return goodPCA;
+}
 
 template <typename T>  inline void WaveformTools<T>::getPedestalCorrectedWaveform(const Waveform<T>& inputWaveform, 
                                                                                   Waveform<T>&       outputWaveform, 
