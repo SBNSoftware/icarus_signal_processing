@@ -10,6 +10,7 @@ cet_make_library( SOURCE ${src_files}
                           icarus_signal_processing_Detection
                           icarus_signal_processing_Filters
                           FFTW3f::FFTW3f
+                          Eigen3::Eigen
                           ROOT::Geom
                           ROOT::XMLIO
                           ROOT::Gdml
