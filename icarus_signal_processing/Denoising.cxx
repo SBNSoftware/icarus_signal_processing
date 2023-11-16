@@ -4,7 +4,7 @@
 #include "Denoising.h"
 #include "icarus_signal_processing/Detection/MorphologicalFunctions2D.h"
 #include "icarus_signal_processing/Detection/LineDetection.h"
-#include "WaveformTools.h"
+#include "icarus_signal_processing/Filters/FFTFilterFunctions.h"
 
 #include <chrono>
 
@@ -26,7 +26,7 @@ void icarus_signal_processing::Denoising::getSelectVals(ArrayFloat::const_iterat
 
     for (size_t i=0; i<numChannels; ++i) 
     {
-        std::vector<float> localVec = morphedWaveformsItr[i];
+        VectorFloat localVec = morphedWaveformsItr[i];
 
         float median = getMedian(localVec.begin(), localVec.end());
 
@@ -35,16 +35,73 @@ void icarus_signal_processing::Denoising::getSelectVals(ArrayFloat::const_iterat
 
         for (size_t j=0; j<baseVec.size(); ++j) baseVec[j] = morphedWaveformsItr[i][j] - median;
 
-//        float rms       = std::sqrt(std::inner_product(baseVec.begin(), baseVec.end(), baseVec.begin(), 0.) / float(baseVec.size()));
-//        float threshold = thresholdVec[i / grouping] * rms;
-//
-//        float maxValue  = *std::max_element(baseVec.begin(),baseVec.end());
-//        float minValue  = *std::min_element(baseVec.begin(),baseVec.end());
-//
-//        std::cout << "   - i: " << i << ", median: " << median << ", rms: " << rms << ", threshold: " << threshold << ", max/min/range: " << maxValue << "/" << minValue << "/" << maxValue-minValue << std::endl;
+        float threshold = thresholdVec[i];
 
-//        threshold = std::min(threshold,float(12.));
-        float threshold = thresholdVec[i / grouping];
+        // make sure the roi vector is initialized
+        std::fill(roiItr[i].begin(),roiItr[i].end(),false);
+
+        int lb(-2 * halfWidth);
+
+        for (size_t j=0; j<nTicks; ++j) 
+        {
+            // Are we over threshold?
+            if (std::fabs(baseVec[j]) > threshold) 
+            {
+                // Check Bounds
+                selectValsItr[i][j] = true;
+
+                // Check ROI limits
+                if (lb < -halfWidth) lb = j - halfWidth;
+            } 
+            else 
+            {
+                selectValsItr[i][j] = false;
+
+                // Check if we had gone over threshold and need to set our ROI
+                if (lb > -(halfWidth+1))
+                {
+                    int    ub         = j + halfWidth;
+                    size_t lowerBound = std::max(lb, 0);
+                    size_t upperBound = std::min(ub, (int) nTicks);
+
+                    for (size_t k=lowerBound; k<upperBound; ++k) roiItr[i][k] = true;
+                }
+
+                lb = -2 * halfWidth;
+            }
+        }
+    }
+
+    return;
+}
+
+void icarus_signal_processing::Denoising::getSelectValsWPCA(ArrayFloat::const_iterator  morphedWaveformsItr,
+                                                            ArrayBool::iterator         selectValsItr,
+                                                            ArrayBool::iterator         roiItr,
+                                                            const VectorFloat&          thresholdVec,
+                                                            const unsigned int          numChannels,
+                                                            const unsigned int          grouping,
+                                                            const unsigned int          window) const
+{
+    auto nTicks = morphedWaveformsItr[0].size();
+
+    // Set a protection width
+    int halfWidth = std::max(int(window/8),4);
+
+//    std::cout << "***** getSelectVals ***** numChannels: " << numChannels << ", grouping: " << grouping << std::endl;
+
+    for (size_t i=0; i<numChannels; ++i) 
+    {
+        VectorFloat localVec = morphedWaveformsItr[i];
+
+        float median = getMedian(localVec.begin(), localVec.end());
+
+        std::vector<float> baseVec;
+        baseVec.resize(localVec.size());
+
+        for (size_t j=0; j<baseVec.size(); ++j) baseVec[j] = morphedWaveformsItr[i][j] - median;
+
+        float threshold = thresholdVec[i];
 
         // make sure the roi vector is initialized
         std::fill(roiItr[i].begin(),roiItr[i].end(),false);
@@ -173,7 +230,7 @@ void icarus_signal_processing::Denoiser1D_Ave::operator()(ArrayFloat::iterator  
                                                           const unsigned int                offset,
                                                           const unsigned int                window) const
 {
-    auto nTicks  = filteredWaveformsItr->size();
+    auto nTicks  = (*filteredWaveformsItr).size();
     auto nGroups = numChannels / grouping;
 
     std::chrono::high_resolution_clock::time_point funcStartTime = std::chrono::high_resolution_clock::now();
@@ -182,9 +239,34 @@ void icarus_signal_processing::Denoiser1D_Ave::operator()(ArrayFloat::iterator  
 
     // Plan here will be form morphed waveforms from the average smoothed waveform of the group
     // To start need a holder for the average waveform...
-    VectorFloat aveWaveform(nTicks);
+    VectorFloat aveWaveformLo(nTicks);
+    VectorFloat aveWaveformHi(nTicks);
+    VectorFloat aveWaveformDiff(nTicks);
+
+    Eigen::Vector2f meanPos {nTicks,0.};
+    Eigen::Matrix2f eigenVectors {{0.,0.},{0.,0.}};
+    Eigen::Vector2f eigenValues {0.,0.};
+
+    Eigen::Vector2f meanPosLo {nTicks/2,0.};
+    Eigen::Matrix2f eigenVectorsLo {{0.,0.},{0.,0.}};
+    Eigen::Vector2f eigenValuesLo {0.,0.};
+
+    Eigen::Vector2f meanPosHi {nTicks/2,0.};
+    Eigen::Matrix2f eigenVectorsHi {{0.,0.},{0.,0.}};
+    Eigen::Vector2f eigenValuesHi {0.,0.};
+
+    // Use an iterated PCA to do "signal protection" on waveforms
+    std::vector<size_t> midPointVec(grouping,nTicks/2);
+    std::vector<float>  aveADCValVec(grouping,0.);
+    std::vector<float>  slopeADCVec(grouping,0.);
+    std::vector<float>  maxADCValVec(grouping,10000.);
+
     size_t      channelIdx(0);
-    size_t      morphIdx(0);
+
+    // Try a butterworth filter
+    // Note that the first parameters is in bins, so frequency will be this number/2048 times 1.25 MHz
+    //icarus_signal_processing::LowPassButterworthFilter butterFilter(250, 5, 4096);
+    icarus_signal_processing::LowPassButterworthFilter butterFilter(250, 5, 4096);
 
     // get an instance of the waveform tools
     icarus_signal_processing::WaveformTools<float> waveformTools;
@@ -192,25 +274,232 @@ void icarus_signal_processing::Denoiser1D_Ave::operator()(ArrayFloat::iterator  
     // Initiate the outer loop over channels which will actually be over groups
     while(channelIdx < numChannels)
     {
-        std::fill(aveWaveform.begin(),aveWaveform.end(),0.);
+        std::fill(aveWaveformLo.begin(),aveWaveformLo.end(),0.);
+        std::fill(aveWaveformHi.begin(),aveWaveformHi.end(),0.);
 
         for(size_t innerIdx = 0; innerIdx < grouping; innerIdx++)
         {
-            std::transform(aveWaveform.begin(),aveWaveform.end(),(*(filteredWaveformsItr + channelIdx+innerIdx)).begin(), aveWaveform.begin(), std::plus<float>());
+            // Get our morphological filter waveform
+            const icarus_signal_processing::IMorphologicalFunctions1D* func = (*(filterFunctionsItr + channelIdx + innerIdx)).get();
+
+            if (!func) 
+            {
+                std::cout << "Found null function for funcIdx " << channelIdx + innerIdx << " of " << numChannels << std::endl;
+                continue;
+            }
+
+            // Need to make a copy of the input waveform so we can massage it a bit
+            VectorFloat waveform = *(filteredWaveformsItr + channelIdx + innerIdx);
+
+            // Now filter to get rid of the higher frequencu components
+            butterFilter(waveform);
+
+            // Get reference for the holder for the morphological filter
+            VectorFloat& morphWaveform = *(morphedWaveformsItr + channelIdx + innerIdx);
+
+            // Run the morphological filter (with specific version for this plane)
+            (*func)(waveform, morphWaveform);
+        
+            // Run the PCA to get a good axis for the waveform and its range
+            waveformTools.principalComponents(morphWaveform, meanPos, eigenVectors, eigenValues, 4., 4., false);
+
+            midPointVec[innerIdx]  = meanPos(0);
+            aveADCValVec[innerIdx] = meanPos(1);
+            slopeADCVec[innerIdx]  = eigenVectors.row(0)[0];
+            maxADCValVec[innerIdx] = std::sqrt(eigenValues[0]);
+
+            maxADCValVec[innerIdx] = 12.;
         }
 
-        float normFactor(1./float(grouping));
+        // Set up to get the correction factors for the two groups in the board we are looking at
+        // Outer loop is over the ticks in the waveform
+        for(size_t tickIdx = 0; tickIdx < nTicks; tickIdx++)
+        {
+            // vectors to accumulate entries
+            PointCloud<float> correction(grouping);
+            PointCloud<float> correctionLo(grouping/2);
+            PointCloud<float> correctionHi(grouping/2);
 
-        std::transform(aveWaveform.begin(),aveWaveform.end(),aveWaveform.begin(),std::bind(std::multiplies<float>(),std::placeholders::_1,normFactor));
+            size_t coreIdx(0);
+            size_t loIdx(0);
+            size_t hiIdx(0);
 
-        // Smooth to try to take out high frequency fluctuations
-        waveformTools.medianSmooth(aveWaveform,aveWaveform,5);
+            // inner loop over the channels in the board
+            for(size_t innerIdx = 0; innerIdx < grouping; innerIdx++)
+            {
+                float morphVal  = (*(morphedWaveformsItr + channelIdx + innerIdx))[tickIdx];
+                float morphDiff = morphVal - (aveADCValVec[innerIdx] + (float(tickIdx) - midPointVec[innerIdx]) * slopeADCVec[innerIdx]);
 
-        // Now run morphological filter
-        const icarus_signal_processing::IMorphologicalFunctions1D* func = (*(filterFunctionsItr + channelIdx)).get();
+                // "Protect" bins that are large with respect to our PCA params
+                if (std::abs(morphDiff) > thresholdVec[channelIdx+innerIdx] * maxADCValVec[innerIdx]) continue;
 
-        (*func)(aveWaveform, *(morphedWaveformsItr + morphIdx++));
+                float adcVal = (*(filteredWaveformsItr + channelIdx + innerIdx))[tickIdx];
 
+                correction[coreIdx++] = WavePoint<float>(innerIdx, adcVal);
+
+                if (innerIdx < grouping/2) correctionLo[loIdx++] = WavePoint<float>(innerIdx,             adcVal);
+                else                       correctionHi[hiIdx++] = WavePoint<float>(innerIdx - grouping/2,adcVal);
+            }
+
+            correction.resize(coreIdx);
+            correctionLo.resize(loIdx);
+            correctionHi.resize(hiIdx);
+
+            if (coreIdx > 6)
+            {
+                // Use PCA and eigenvalues to trim to core
+                waveformTools.principalComponents(correction, meanPos, eigenVectors, eigenValues, 3., 3., false);
+
+                float eigenVal = std::sqrt(eigenValues(0));
+
+                std::sort(correctionLo.begin(),correctionLo.end(),[&meanPos](const auto& left, const auto& right){return std::abs(left[1]-meanPos(1)) < std::abs(right[1]-meanPos(1));});
+
+                while(std::abs(correctionLo[loIdx-1][1]-meanPos(1)) > 1.5 * eigenVal && loIdx > 2) loIdx--;
+
+                correctionLo.resize(loIdx);
+
+                std::sort(correctionHi.begin(),correctionHi.end(),[&meanPos](const auto& left, const auto& right){return std::abs(left[1]-meanPos(1)) < std::abs(right[1]-meanPos(1));});
+
+                while(std::abs(correctionHi[hiIdx][1]-meanPos(1)) > 1.5 * eigenVal && hiIdx > 2) hiIdx--;
+
+                correctionHi.resize(hiIdx);
+            }
+
+//            if (loIdx > 6)
+//            {
+//                // Use PCA and eigenvalues to trim to core
+//                waveformTools.principalComponents(correctionLo, meanPos, eigenVectors, eigenValues, 5., 5., false);
+//
+//                float eigenVal = std::sqrt(eigenValues(0));
+//
+//                std::sort(correctionLo.begin(),correctionLo.end(),[&meanPos](const auto& left, const auto& right){return std::abs(left.second-meanPos(1)) < std::abs(right.second-meanPos(1));});
+//
+//                while(std::abs(correctionLo[loIdx].second-meanPos(1) && loIdx > 2) > 1.5 * eigenVal) loIdx--;
+//
+//                correctionLo.resize(loIdx);
+//            }
+
+//            icarus_signal_processing::WavePoint<float> medianVals;
+
+//            waveformTools.getMedian(correctionLo,medianVals);
+
+            int rangeLo(0);
+            int coreRangeLo(0);
+            float medianLo(0.);
+
+            VectorFloat corVec(loIdx);
+
+            for(size_t corVecIdx = 0; corVecIdx < loIdx; corVecIdx++) corVec[corVecIdx] = correctionLo[corVecIdx][1];
+
+            medianLo = getIteratedMedian(corVec.begin(), corVec.end(), rangeLo, coreRangeLo);
+            //waveformTools.getMedian(corVec, median);
+
+            aveWaveformLo[tickIdx] = medianLo;
+
+//            if (hiIdx > 6)
+//            {
+//                // Use PCA and eigenvalues to trim to core
+//                waveformTools.principalComponents(correctionHi, meanPos, eigenVectors, eigenValues, 5., 5., false);
+//
+//                float eigenVal = std::sqrt(eigenValues(0));
+//
+//                std::sort(correctionHi.begin(),correctionHi.end(),[&meanPos](const auto& left, const auto& right){return std::abs(left.second-meanPos(1)) < std::abs(right.second-meanPos(1));});
+//
+//                while(std::abs(correctionHi[hiIdx].second-meanPos(1) && hiIdx > 2) > 1.5 * eigenVal) hiIdx--;
+//
+//                correctionHi.resize(hiIdx);
+//            }
+
+//            waveformTools.getMedian(correctionHi,medianVals);
+
+            int rangeHi(0);
+            int coreRangeHi(0);
+            float medianHi(0.);
+
+            corVec.resize(hiIdx);
+
+            for(size_t corVecIdx = 0; corVecIdx < hiIdx; corVecIdx++) corVec[corVecIdx] = correctionHi[corVecIdx][1];
+
+            medianHi = getIteratedMedian(corVec.begin(), corVec.end(), rangeHi, coreRangeHi);
+            //waveformTools.getMedian(corVec, median);
+
+            aveWaveformHi[tickIdx] = medianHi;
+
+            corVec.resize(coreIdx);
+
+            int range(0);
+            int coreRange(0);
+            float median(0.);
+
+            for(size_t corVecIdx = 0; corVecIdx < coreIdx; corVecIdx++) corVec[corVecIdx] = correction[corVecIdx][1];
+
+            median = getIteratedMedian(corVec.begin(), corVec.end(), range, coreRange);
+
+            if (!(tickIdx % 1000)) std::cout << "TickIdx: " << tickIdx << ", median/medianLo/medianHi: " << median << "/" << medianLo << "/" << medianHi << ", core/Lo/Hi: " << coreRange << "/" << coreRangeLo << "/" << coreRangeHi << std::endl;
+            //waveformTools.getMedian(corVec, median);
+
+            if (std::abs(medianLo) > 10. && std::abs(medianLo/median) > 1.1) aveWaveformLo[tickIdx] = median;
+            if (std::abs(medianHi) > 10. && std::abs(medianHi/median) > 1.1) aveWaveformHi[tickIdx] = median;
+        }
+
+        // Get the difference between the two
+        std::transform(aveWaveformLo.begin(), aveWaveformLo.end(), aveWaveformHi.begin(), aveWaveformDiff.begin(), std::minus<float>());
+
+        // Compute the PCA on the difference which we can use to try to get rid of outliers
+        waveformTools.principalComponents(aveWaveformDiff, meanPos, eigenVectors, eigenValues, 25., 25., false);
+
+        // Look at PCA of correction factors
+        waveformTools.principalComponents(aveWaveformLo, meanPosLo, eigenVectorsLo, eigenValuesLo, 25., 25., false);
+        waveformTools.principalComponents(aveWaveformHi, meanPosHi, eigenVectorsHi, eigenValuesHi, 25., 25., false);
+
+        // Do some eigen magic
+        float adcSlope   = eigenVectors.row(0)(0);
+        float adcSlopeLo = eigenVectorsLo.row(0)(0);
+        float adcSlopeHi = eigenVectorsHi.row(0)(0);
+
+        float eigenVal   = 3. * std::sqrt(eigenValues(0));
+        float eigenValLo = 4. * std::sqrt(eigenValuesLo(0));
+        float eigenValHi = 4. * std::sqrt(eigenValuesHi(0));
+
+        // The goal of this loop is to try to remove outliers from the correction vector. Basically, if the difference between the two correction vectors 
+        // is outside a range defined by the PCA then, if possible, use the correction from the other vector or, if not, set to zero.
+        for(size_t tickIdx = 0; tickIdx < aveWaveformLo.size(); tickIdx++)
+        {
+            float adcCutVal   = (float(tickIdx) - meanPos(0))   * adcSlope   + eigenVal   + meanPos(1);
+            float adcCutValLo = (float(tickIdx) - meanPosLo(0)) * adcSlopeLo + eigenValLo + meanPosLo(1);
+            float adcCutValHi = (float(tickIdx) - meanPosHi(0)) * adcSlopeHi + eigenValHi + meanPosHi(1);
+
+            // If the diff waveform has a large excursion then check which set of correction factors are to blame
+            if (std::abs(aveWaveformDiff[tickIdx]) > adcCutVal && std::abs(aveWaveformLo[tickIdx]) > adcCutValLo)
+            {
+                // If the other correction factors for this group are "good" then use them
+                if (std::abs(aveWaveformHi[tickIdx]) < adcCutValHi) aveWaveformLo[tickIdx] = aveWaveformHi[tickIdx];
+                else                                                aveWaveformLo[tickIdx] = meanPosLo(1);
+            } 
+
+            // Now check if "hi" values are to blame
+            if (std::abs(aveWaveformDiff[tickIdx]) > adcCutVal && std::abs(aveWaveformHi[tickIdx]) > adcCutValHi)
+            {
+                if (std::abs(aveWaveformLo[tickIdx]) < adcCutValLo) aveWaveformHi[tickIdx] = aveWaveformLo[tickIdx];
+                else                                                aveWaveformHi[tickIdx] = meanPosHi(1);
+            } 
+        }
+
+        // Now we can correct the waveforms in this group
+        for(size_t innerIdx = 0; innerIdx < grouping; innerIdx++)
+        {
+            if (innerIdx < grouping/2)
+            {
+                std::transform((*(filteredWaveformsItr + channelIdx+innerIdx)).begin(),(*(filteredWaveformsItr + channelIdx+innerIdx)).end(),aveWaveformLo.begin(),(*(waveLessCoherentItr + channelIdx+innerIdx)).begin(),std::minus<float>());
+                *(correctedMediansItr + channelIdx + innerIdx) = aveWaveformLo;
+            }
+            else
+            {
+                std::transform((*(filteredWaveformsItr + channelIdx+innerIdx)).begin(),(*(filteredWaveformsItr + channelIdx+innerIdx)).end(),aveWaveformHi.begin(),(*(waveLessCoherentItr + channelIdx+innerIdx)).begin(),std::minus<float>());
+                *(correctedMediansItr + channelIdx + innerIdx) = aveWaveformHi;
+            }
+        }
+ 
         // Make sure the channelIdx keeps pace
         channelIdx += grouping;
     }
@@ -218,61 +507,12 @@ void icarus_signal_processing::Denoiser1D_Ave::operator()(ArrayFloat::iterator  
     std::chrono::high_resolution_clock::time_point morphStop  = std::chrono::high_resolution_clock::now();
     std::chrono::high_resolution_clock::time_point selStart = morphStop;
 
-    getSelectVals(morphedWaveformsItr, selectValsItr, roiItr, thresholdVec, nGroups, grouping, window);
-
     std::chrono::high_resolution_clock::time_point selStop  = std::chrono::high_resolution_clock::now();
     std::chrono::high_resolution_clock::time_point noiseStart = selStop;
 
-    VectorFloat v(grouping);
-    ArrayFloat  smoothWave(numChannels);
-
-    for (size_t i=0; i<nTicks; ++i) 
-    {
-        for (size_t j=0; j<nGroups; ++j) 
-        {
-            size_t group_start = j * grouping;
-            size_t group_end = (j+1) * grouping;
-
-            // Compute median.
-            size_t idxV(0);
-
-            for (size_t c=group_start; c<group_end; ++c) 
-            {
-                if (i==0) waveformTools.triangleSmooth(filteredWaveformsItr[c],smoothWave[c]);
-                if (!selectValsItr[j][i] && std::abs(filteredWaveformsItr[c][i]) < 20) v[idxV++] = smoothWave[c][i]; //filteredWaveformsItr[c][i];
-                //if (!selectValsItr[j][i]) v[idxV++] = smoothWave[c][i]; //filteredWaveformsItr[c][i];
-            }
-
-            if (idxV > 0)
-            {
-                float median   = getMedian(v.begin(),v.begin()+idxV);
-//                float mostProb = getMostProbable(v,idxV);
-//                float average  = std::accumulate(v.begin(),v.end(),0.) / float(idxV);
-
-                std::transform(v.begin(),v.begin()+idxV,v.begin(),std::bind(std::minus<float>(),std::placeholders::_1,median));
-                float rms = std::sqrt(std::inner_product(v.begin(),v.begin()+idxV,v.begin(),0.) / float(v.size()));
-
-                std::sort(v.begin(),v.begin()+idxV,[](const auto& left,const auto& right){return std::abs(left) < std::abs(right);});
-
-                while(idxV > 0)
-                {
-                    if (std::abs(v[idxV-1]) < rms) break;
-                    idxV--;
-                }
-
-                float tempMedian = getMedian(v.begin(),v.begin()+idxV);
-
-//                std::cout << ">tick: " << i << ", group: " << j << ", median: " << median << ", mostProb: " << mostProb << ", average: " << average << ", rms: " << rms << ", tempMedian: " << tempMedian << std::endl;
-
-                median += tempMedian;
-
-                correctedMediansItr[j][i] = median;
-                for (auto k=group_start; k<group_end; ++k) waveLessCoherentItr[k][i] = filteredWaveformsItr[k][i] - median;
-            }
-        }
-    }
-
     float rms(0.);
+    VectorFloat v(grouping);
+
     for (size_t i=0; i<nGroups; ++i) 
     {
         for (size_t j=0; j<nTicks; ++j) 
@@ -298,6 +538,224 @@ void icarus_signal_processing::Denoiser1D_Ave::operator()(ArrayFloat::iterator  
         std::cout << "                   - morph: " << morphTime.count() << ", sel: " << selTime.count() << ", noise: " << noiseTime.count() << ", total: " << funcTime.count() << std::endl;
     }
   
+    return;
+}
+
+void icarus_signal_processing::Denoiser1D_PCA::operator()(ArrayFloat::iterator              waveLessCoherentItr,
+                                                          ArrayFloat::const_iterator        filteredWaveformsItr,
+                                                          ArrayFloat::iterator              morphedWaveformsItr,
+                                                          ArrayFloat::iterator              intrinsicRMSItr,
+                                                          ArrayBool::iterator               selectValsItr,
+                                                          ArrayBool::iterator               roiItr,
+                                                          ArrayFloat::iterator              correctedMediansItr,
+                                                          FilterFunctionVec::const_iterator filterFunctionsItr,
+                                                          const VectorFloat&                thresholdVec,
+                                                          const unsigned int                numChannels,
+                                                          const unsigned int                grouping,
+                                                          const unsigned int                offset,
+                                                          const unsigned int                window) const
+{
+    // This function will attempt to remove the coherent noise using a Principal Componets Analysis approach. 
+    // The basic idea is to consider two pairs of coherent noise correction factors in adjacent groups. For example,
+    // an electronics readout board is 64 channels and it is known that the dominate noise effect is coherent across
+    // all 64 channels with a smaller component in two groups of 32. Hence, we can compute coherent noise corrections
+    // for each group of 32 and, for any given time tick, consider the two corrections as a pair. We can take all pairs
+    // for 4096 ticks in readout as a point cloud which will have a correlation based on the coherent noise. We can
+    // remove the coherent component by findding the PCA axes and eigen values, then rotate and scale to remove the
+    // correlation. 
+    // There will be some specific details that we will work out as we go along...
+    // Ok, basic steps will be:
+    // 1) First get the coherent noise correction factors in the desired groups
+    // 2) Form the point cloud on a board by board basis
+    // 3) Get an interated PCA to find the best axes
+    // 4) Rotate and scale to remove correlations. Note that this is the "denoised" image of corrections
+    // 5) Subtract these denoised values from the calculated correction factors - this should leave an
+    //    image of purge coherent noise
+    // 6) Return...
+
+    auto nTicks  = (*filteredWaveformsItr).size();
+    auto nGroups = numChannels / grouping;
+
+    std::chrono::high_resolution_clock::time_point funcStartTime = std::chrono::high_resolution_clock::now();
+
+    std::chrono::high_resolution_clock::time_point morphStart = funcStartTime;
+
+    // Plan here will be form morphed waveforms from the average smoothed waveform of the group
+    // To start need a holder for the average waveform...
+    Eigen::Vector2f meanPos {nTicks,0.};
+    Eigen::Matrix2f eigenVectors {{0.,0.},{0.,0.}};
+    Eigen::Vector2f eigenValues {0.,0.};
+
+    PointCloud<float> pointCloud(nTicks);
+    PointCloud<float> rotPointCloud(nTicks);
+    PointCloud<float> corPointCloud(nTicks);
+
+    // Use an iterated PCA to do "signal protection" on waveforms
+    std::vector<size_t> midPointVec(grouping,nTicks/2);
+    std::vector<float>  aveADCValVec(grouping,0.);
+    std::vector<float>  slopeADCVec(grouping,0.);
+    std::vector<float>  maxADCValVec(grouping,10000.);
+
+    size_t channelIdx(0);
+    size_t halfGroup(grouping/2);
+
+    // Try a butterworth filter
+    // Note that the first parameters is in bins, so frequency will be this number/2048 times 1.25 MHz
+    //icarus_signal_processing::LowPassButterworthFilter butterFilter(250, 5, 4096);
+    icarus_signal_processing::LowPassButterworthFilter butterFilter(250, 5, 4096);
+
+    // get an instance of the waveform tools
+    icarus_signal_processing::WaveformTools<float> waveformTools;
+    
+    // Initiate the outer loop over channels which will actually be over groups
+    while(channelIdx < numChannels)
+    {
+        for(size_t tickIdx = 0; tickIdx < nTicks; tickIdx++)
+        {
+            std::vector<float> adcVals(grouping);
+
+            for(size_t innerIdx = 0; innerIdx < grouping; innerIdx++)
+                adcVals[innerIdx] = (*(filteredWaveformsItr + channelIdx + innerIdx))[tickIdx];
+
+            float meanLo = getIteratedMean(adcVals.begin(),           adcVals.begin()+halfGroup, .25);
+            float meanHi = getIteratedMean(adcVals.begin()+halfGroup, adcVals.end(),             .25);
+
+            pointCloud[tickIdx] = WavePoint<float>(meanLo,meanHi);
+        }
+
+        // Compute the PCA on the point cloud to get the coherent noise component
+        waveformTools.principalComponents(pointCloud, meanPos, eigenVectors, eigenValues, 2., 3., false);
+
+        // Remember that the eigen values are sorted smallest to largest and the eigen vectors are row oriented
+        // So the primary axis will be index 1, the transverse index 0. 
+        Eigen::Matrix2f rotMatrix;
+        
+        rotMatrix << eigenVectors(1,0),eigenVectors(1,1),eigenVectors(0,0),eigenVectors(0,1);
+
+        if (rotMatrix(0,0) < 0.) rotMatrix *= -1.;
+
+        float crossProduct = rotMatrix.row(0)[0]*rotMatrix.row(1)[1] - rotMatrix.row(0)[1]*rotMatrix.row(1)[0];
+
+        rotMatrix.row(1) *= crossProduct;
+
+        VectorFloat correctionsLow(pointCloud.size(),0.);
+
+        getPredictedCorrections(pointCloud, meanPos, rotMatrix, 3.*std::sqrt(eigenValues[1]), 3.*std::sqrt(eigenValues[0]), correctionsLow);
+
+        // Now go the other way
+        for(size_t tickIdx = 0; tickIdx < pointCloud.size(); tickIdx++)
+            pointCloud[tickIdx] = WavePoint<float>(pointCloud[tickIdx][1],pointCloud[tickIdx][0]);
+
+        // Compute the PCA on the point cloud to get the coherent noise component
+        waveformTools.principalComponents(pointCloud, meanPos, eigenVectors, eigenValues, 2., 3., false);
+
+        // Remember that the eigen values are sorted smallest to largest and the eigen vectors are row oriented
+        // So the primary axis will be index 1, the transverse index 0. 
+        rotMatrix << eigenVectors(1,0),eigenVectors(1,1),eigenVectors(0,0),eigenVectors(0,1);
+
+        if (rotMatrix(0,0) < 0.) rotMatrix *= -1.;
+
+        crossProduct = rotMatrix.row(0)[0]*rotMatrix.row(1)[1] - rotMatrix.row(0)[1]*rotMatrix.row(1)[0];
+
+        rotMatrix.row(1) *= crossProduct;
+
+        VectorFloat correctionsHigh(pointCloud.size(),0.);
+
+        getPredictedCorrections(pointCloud, meanPos, rotMatrix, 3.*std::sqrt(eigenValues[1]), 3.*std::sqrt(eigenValues[0]), correctionsHigh);
+
+        // Now we can correct the waveforms in this group
+        for(size_t innerIdx = 0; innerIdx < grouping; innerIdx++)
+        {
+            auto& filteredWaveform = *(filteredWaveformsItr + channelIdx+innerIdx);
+            auto& outWaveform      = *(waveLessCoherentItr + channelIdx+innerIdx);
+            auto& corMedians       = *(correctedMediansItr + channelIdx + innerIdx);
+
+            if (innerIdx < halfGroup)
+            {
+                std::copy(correctionsLow.begin(),correctionsLow.end(),corMedians.begin());
+                std::transform(filteredWaveform.begin(),filteredWaveform.end(),correctionsLow.begin(),outWaveform.begin(),std::minus<float>());
+            }
+            else
+            {
+                std::copy(correctionsHigh.begin(),correctionsHigh.end(),corMedians.begin());
+                std::transform(filteredWaveform.begin(),filteredWaveform.end(),correctionsHigh.begin(),outWaveform.begin(),std::minus<float>());               
+            }
+        }
+ 
+        // Make sure the channelIdx keeps pace
+        channelIdx += grouping;
+    }
+
+    std::chrono::high_resolution_clock::time_point morphStop  = std::chrono::high_resolution_clock::now();
+    std::chrono::high_resolution_clock::time_point selStart = morphStop;
+
+    std::chrono::high_resolution_clock::time_point selStop  = std::chrono::high_resolution_clock::now();
+    std::chrono::high_resolution_clock::time_point noiseStart = selStop;
+
+    float rms(0.);
+    VectorFloat v(grouping);
+
+    for (size_t i=0; i<nGroups; ++i) 
+    {
+        for (size_t j=0; j<nTicks; ++j) 
+        {
+            size_t idxV(0);
+            for (size_t k=i*grouping; k<(i+1)*grouping; ++k) v[idxV++] = waveLessCoherentItr[k][j];
+            rms = std::sqrt(std::inner_product(v.begin(), v.begin()+idxV, v.begin(), 0.) / float(v.size()));
+            intrinsicRMSItr[i][j] = rms;
+        }
+    }
+
+    std::chrono::high_resolution_clock::time_point noiseStop = std::chrono::high_resolution_clock::now();
+    std::chrono::high_resolution_clock::time_point funcStopTime = std::chrono::high_resolution_clock::now();
+  
+    std::chrono::duration<double> funcTime   = std::chrono::duration_cast<std::chrono::duration<double>>(funcStopTime - funcStartTime);
+    std::chrono::duration<double> morphTime  = std::chrono::duration_cast<std::chrono::duration<double>>(morphStop - morphStart);
+    std::chrono::duration<double> selTime    = std::chrono::duration_cast<std::chrono::duration<double>>(selStop - selStart);
+    std::chrono::duration<double> noiseTime  = std::chrono::duration_cast<std::chrono::duration<double>>(noiseStop - noiseStart);
+
+    if (fOutputStats)
+    {
+        std::cout << "*** Denoising ***  - # channels: " << numChannels << ", ticks: " << nTicks << ", groups: " << nGroups << std::endl;
+        std::cout << "                   - morph: " << morphTime.count() << ", sel: " << selTime.count() << ", noise: " << noiseTime.count() << ", total: " << funcTime.count() << std::endl;
+    }
+  
+    return;
+}
+
+void icarus_signal_processing::Denoiser1D_NoCoherent::operator()(ArrayFloat::iterator              waveLessCoherentItr,
+                                                                 ArrayFloat::const_iterator        filteredWaveformsItr,
+                                                                 ArrayFloat::iterator              morphedWaveformsItr,
+                                                                 ArrayFloat::iterator              intrinsicRMSItr,
+                                                                 ArrayBool::iterator               selectValsItr,
+                                                                 ArrayBool::iterator               roiItr,
+                                                                 ArrayFloat::iterator              correctedMediansItr,
+                                                                 FilterFunctionVec::const_iterator filterFunctionsItr,
+                                                                 const VectorFloat&                thresholdVec,
+                                                                 const unsigned int                numChannels,
+                                                                 const unsigned int                grouping,
+                                                                 const unsigned int                offset,
+                                                                 const unsigned int                window) const
+{
+    // Use the aveage method to compute everything...
+    icarus_signal_processing::Denoiser1D_Ave()(waveLessCoherentItr,
+                                               filteredWaveformsItr,
+                                               morphedWaveformsItr,
+                                               intrinsicRMSItr,
+                                               selectValsItr,
+                                               roiItr,
+                                               correctedMediansItr,
+                                               filterFunctionsItr,
+                                               thresholdVec,
+                                               numChannels,
+                                               grouping,
+                                               offset,
+                                               window);
+
+    // But now overwrite the output with unfiltered waveforms
+    for(size_t channelIdx = 0; channelIdx < numChannels; channelIdx++)
+        std::copy((*(filteredWaveformsItr + channelIdx)).begin(),(*(filteredWaveformsItr + channelIdx)).end(),(*(waveLessCoherentItr + channelIdx)).begin());
+
     return;
 }
 
@@ -361,6 +819,45 @@ void icarus_signal_processing::Denoiser1D_Protect::operator()(ArrayFloat::iterat
   
     return;
 }
+
+bool  icarus_signal_processing::Denoising::getPredictedCorrections(const PointCloud<float>& pointCloud, const WavePoint<float>& meanPos, const Eigen::Matrix2f& rotMatrix, float majorAxis, float minorAxis, VectorFloat& correctionVec) const
+{
+    // Here we try to return a vector of predicted correction factors given the input point cloud
+    // Note that we have run a PCA on the input point cloud which determines an error ellipse encompassing the data
+   
+    for(size_t pointIdx = 0; pointIdx < pointCloud.size(); pointIdx++)
+    {
+        // Start by rotating to the elllipse coordinate system
+        WavePoint<float> input = pointCloud[pointIdx] - meanPos;
+        WavePoint<float> point = rotMatrix * input;
+
+        // The points are referenced to the ellipse center already so get vector magnitude and direction cosines
+        float pointMag = point.norm();
+        float cosTheta = point[0]/pointMag;
+        float sinTheta = point[1]/pointMag;
+
+        // Get intersection of this vector with ellipse edge
+        float            radical    = std::sqrt(std::pow(majorAxis*sinTheta,2)+std::pow(minorAxis*cosTheta,2));
+        WavePoint<float> ellipseInt(majorAxis * minorAxis * cosTheta / radical,majorAxis * minorAxis * sinTheta / radical);
+        float            ellipseMag = ellipseInt.norm();
+
+        // Is this a candidate signal?
+        // If so then replace with point on the error ellipse
+        if (pointMag > ellipseMag) point = ellipseInt;
+
+        // In the coordinate system of the ellipse the major axis will define the predicted value for the y coordinate
+        // So set that to zero here
+        point[1] = 0.;
+
+        // Rotate back to the input coordinate system
+        point = rotMatrix.transpose() * point;
+
+        correctionVec[pointIdx] = point[1];
+    }
+
+    return true;
+}
+
 
 float icarus_signal_processing::Denoising::getMedian(std::vector<float>::iterator vecStart, std::vector<float>::iterator vecEnd) const
 {
@@ -533,8 +1030,9 @@ float icarus_signal_processing::Denoising::getIteratedMedian(std::vector<float>:
     range     = 5000;
     coreRange = 5000;
 
-    // Realistically, we should have enough bins to get a reliable result, arbitrarily choose that to be 8 bins
-    if (numBins > 8)
+    // Realistically, we should have enough bins to get a reliable result, arbitrarily choose that to be 4 bins
+    // (so we keep coreRange >= 0)
+    if (numBins > 4)
     {
          // Now sort into ascending order, values at the beginning may be negative, values at the end positive
          std::sort(vecBegin,vecEnd);
@@ -548,7 +1046,7 @@ float icarus_signal_processing::Denoising::getIteratedMedian(std::vector<float>:
 
          // Try a refinement by tossing out the largest deviation (which will be at one of the two ends)
 //         while(maxLoops-- && range > 2 * coreRange)
-         while(std::distance(vecBegin,vecEnd) > 8 && range > 2 * coreRange)
+         while(std::distance(vecBegin,vecEnd) > 4 && range > 2 * coreRange)
          {
              // Which end is largest deviation? 
              // By definition the median will be more positive than first element, less than the last element
@@ -562,6 +1060,39 @@ float icarus_signal_processing::Denoising::getIteratedMedian(std::vector<float>:
     }
 
     return median;
+}
+
+float icarus_signal_processing::Denoising::getIteratedMean(std::vector<float>::iterator vecBegin, std::vector<float>::iterator vecEnd, float fracToCut) const
+{
+    float mean(0.);
+
+    size_t nValues = std::distance(vecBegin,vecEnd);
+    size_t nToDrop = fracToCut * nValues;
+
+    // Guard against empty array
+    if (nValues > 0)
+    {
+        // Note we drop from both front and back, make sure we have enough elements
+        if (int(nValues) - 2 * int(nToDrop) < 3) nToDrop = (nValues - 3) / 2;
+
+        // Make local copy of input
+        std::vector<float> tempVec(vecBegin,vecEnd);
+
+        // Sort in ascending order
+        std::sort(tempVec.begin(),tempVec.end());
+
+        // Compute the mean of what remains
+        mean = std::accumulate(tempVec.begin()+nToDrop,tempVec.end()-nToDrop,0.) / float(std::distance(tempVec.begin()+nToDrop,tempVec.end()-nToDrop));
+    }
+
+    return mean;
+}
+
+float icarus_signal_processing::Denoising::getTruncatedMean(std::vector<float>::iterator, std::vector<float>::iterator, float) const
+{
+    float mean = 0.;
+
+    return mean;
 }
 
 
