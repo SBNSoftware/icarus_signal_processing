@@ -435,7 +435,7 @@ void icarus_signal_processing::Denoiser1D_Ave::operator()(ArrayFloat::iterator  
 
             median = getIteratedMedian(corVec.begin(), corVec.end(), range, coreRange);
 
-            if (!(tickIdx % 1000)) std::cout << "TickIdx: " << tickIdx << ", median/medianLo/medianHi: " << median << "/" << medianLo << "/" << medianHi << ", core/Lo/Hi: " << coreRange << "/" << coreRangeLo << "/" << coreRangeHi << std::endl;
+            //if (!(tickIdx % 1000)) std::cout << "TickIdx: " << tickIdx << ", median/medianLo/medianHi: " << median << "/" << medianLo << "/" << medianHi << ", core/Lo/Hi: " << coreRange << "/" << coreRangeLo << "/" << coreRangeHi << std::endl;
             //waveformTools.getMedian(corVec, median);
 
             if (std::abs(medianLo) > 10. && std::abs(medianLo/median) > 1.1) aveWaveformLo[tickIdx] = median;
