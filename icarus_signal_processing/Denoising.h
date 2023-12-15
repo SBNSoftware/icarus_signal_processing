@@ -25,6 +25,7 @@
 #include "icarus_signal_processing/Detection/MorphologicalFunctions1D.h"
 #include "icarus_signal_processing/Detection/MorphologicalFunctions2D.h"
 #include "ICARUSSigProcDefs.h"
+#include "icarus_signal_processing/WaveformTools.h"
 
 namespace icarus_signal_processing {
 
@@ -49,6 +50,14 @@ public:
                        const unsigned int,
                        const unsigned int,
                        const unsigned int) const;
+
+    void getSelectValsWPCA(ArrayFloat::const_iterator,
+                           ArrayBool::iterator,
+                           ArrayBool::iterator,
+                           const VectorFloat&,
+                           const unsigned int,
+                           const unsigned int,
+                           const unsigned int) const;
 
     void removeCoherentNoise(ArrayFloat::iterator,
                              ArrayFloat::const_iterator,
@@ -80,6 +89,10 @@ public:
     float getMostProbable(  std::vector<float>::iterator, std::vector<float>::iterator) const;
     float getMode(          std::vector<float>::iterator, std::vector<float>::iterator) const;
     float getIteratedMedian(std::vector<float>::iterator, std::vector<float>::iterator, int&, int&) const;
+    float getIteratedMean(  std::vector<float>::iterator, std::vector<float>::iterator, float) const;
+    float getTruncatedMean( std::vector<float>::iterator, std::vector<float>::iterator, float) const;
+
+    bool  getPredictedCorrections(const PointCloud<float>&, const WavePoint<float>&, const Eigen::Matrix2f&, float, float, VectorFloat&) const;
 
 private:
     // The code for the most probable calculation will need a std vector
@@ -168,6 +181,54 @@ class Denoiser1D_Ave : virtual public IDenoiser1D, public Denoising {
 public:
     /// Default constructor
     Denoiser1D_Ave(bool outputStats=false) : Denoising(outputStats), fOutputStats(outputStats) {}
+
+    void operator()(ArrayFloat::iterator,
+                    ArrayFloat::const_iterator,
+                    ArrayFloat::iterator,
+                    ArrayFloat::iterator,
+                    ArrayBool::iterator,
+                    ArrayBool::iterator,
+                    ArrayFloat::iterator,
+                    FilterFunctionVec::const_iterator,
+                    const VectorFloat&,
+                    const unsigned int,
+                    const unsigned int,
+                    const unsigned int,
+                    const unsigned int ) const override;
+
+private:
+    bool fOutputStats;
+
+};
+
+class Denoiser1D_PCA : virtual public IDenoiser1D, public Denoising {
+public:
+    /// Default constructor
+    Denoiser1D_PCA(bool outputStats=false) : Denoising(outputStats), fOutputStats(outputStats) {}
+
+    void operator()(ArrayFloat::iterator,
+                    ArrayFloat::const_iterator,
+                    ArrayFloat::iterator,
+                    ArrayFloat::iterator,
+                    ArrayBool::iterator,
+                    ArrayBool::iterator,
+                    ArrayFloat::iterator,
+                    FilterFunctionVec::const_iterator,
+                    const VectorFloat&,
+                    const unsigned int,
+                    const unsigned int,
+                    const unsigned int,
+                    const unsigned int ) const override;
+
+private:
+    bool fOutputStats;
+
+};
+
+class Denoiser1D_NoCoherent : virtual public IDenoiser1D, public Denoising {
+public:
+    /// Default constructor
+    Denoiser1D_NoCoherent(bool outputStats=false) : Denoising(outputStats), fOutputStats(outputStats) {}
 
     void operator()(ArrayFloat::iterator,
                     ArrayFloat::const_iterator,
