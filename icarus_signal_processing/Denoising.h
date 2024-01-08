@@ -245,7 +245,6 @@ public:
                     const unsigned int ) const override;
 
 private:
-    bool fOutputStats;
 
 };
 
