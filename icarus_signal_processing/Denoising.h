@@ -228,7 +228,7 @@ private:
 class Denoiser1D_NoCoherent : virtual public IDenoiser1D, public Denoising {
 public:
     /// Default constructor
-    Denoiser1D_NoCoherent(bool outputStats=false) : Denoising(outputStats), fOutputStats(outputStats) {}
+    Denoiser1D_NoCoherent(bool outputStats=false) : Denoising(outputStats) {}
 
     void operator()(ArrayFloat::iterator,
                     ArrayFloat::const_iterator,
@@ -245,7 +245,6 @@ public:
                     const unsigned int ) const override;
 
 private:
-    bool fOutputStats;
 
 };
 
