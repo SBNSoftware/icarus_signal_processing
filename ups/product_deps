@@ -250,7 +250,7 @@ libdir	fq_dir		lib
 ####################################
 product		version		qual	flags		<table_format=2>
 fftw		v3_3_10		-
-root		v6_26_06b	-
+root		v6_28_10b	-
 cetmodules	v3_20_00	-	only_for_build
 end_product_list
 ####################################
@@ -307,14 +307,14 @@ end_product_list
 #
 ####################################
 qualifier	root		fftw	notes
-c14:debug	c14:p3913:debug	-nq-
-c14:prof	c14:p3913:prof	-nq-
-c7:debug	c7:p3913:debug	-nq-
-c7:prof		c7:p3913:prof	-nq-
-e26:debug	e26:p3913:debug	-nq-
-e26:prof	e26:p3913:prof	-nq-
-e20:debug	e20:p3913:debug	-nq-
-e20:prof	e20:p3913:prof	-nq-
+c14:debug	c14:p3915:debug	-nq-
+c14:prof	c14:p3915:prof	-nq-
+c7:debug	c7:p3915:debug	-nq-
+c7:prof		c7:p3915:prof	-nq-
+e26:debug	e26:p3915:debug	-nq-
+e26:prof	e26:p3915:prof	-nq-
+e20:debug	e20:p3915:debug	-nq-
+e20:prof	e20:p3915:prof	-nq-
 end_qualifier_list
 ####################################
 
