@@ -150,6 +150,7 @@ void icarus_signal_processing::Denoiser1D::operator()(ArrayFloat::iterator      
                                                       ArrayFloat::iterator              correctedMediansItr,
                                                       FilterFunctionVec::const_iterator filterFunctionsItr,
                                                       const VectorFloat&                thresholdVec,
+                                                      const VectorInt&                  channelVec,
                                                       const unsigned int                numChannels,
                                                       const unsigned int                grouping,
                                                       const unsigned int                groupingOffset,
@@ -225,6 +226,7 @@ void icarus_signal_processing::Denoiser1D_Ave::operator()(ArrayFloat::iterator  
                                                           ArrayFloat::iterator              correctedMediansItr,
                                                           FilterFunctionVec::const_iterator filterFunctionsItr,
                                                           const VectorFloat&                thresholdVec,
+                                                          const VectorInt&                  channelVec,
                                                           const unsigned int                numChannels,
                                                           const unsigned int                grouping,
                                                           const unsigned int                offset,
@@ -550,6 +552,7 @@ void icarus_signal_processing::Denoiser1D_PCA::operator()(ArrayFloat::iterator  
                                                           ArrayFloat::iterator              correctedMediansItr,
                                                           FilterFunctionVec::const_iterator filterFunctionsItr,
                                                           const VectorFloat&                thresholdVec,
+                                                          const VectorInt&                  channelVec,
                                                           const unsigned int                numChannels,
                                                           const unsigned int                grouping,
                                                           const unsigned int                offset,
@@ -582,27 +585,27 @@ void icarus_signal_processing::Denoiser1D_PCA::operator()(ArrayFloat::iterator  
 
     // Plan here will be form morphed waveforms from the average smoothed waveform of the group
     // To start need a holder for the average waveform...
-    Eigen::Vector2f meanPos {nTicks,0.};
+    Eigen::Vector2f meanPos {0.,0.};
     Eigen::Matrix2f eigenVectors {{0.,0.},{0.,0.}};
     Eigen::Vector2f eigenValues {0.,0.};
 
-    PointCloud<float> pointCloud(nTicks);
-    PointCloud<float> rotPointCloud(nTicks);
-    PointCloud<float> corPointCloud(nTicks);
+    PointCloud<float> medianCloud(nTicks);
+    PointCloud<float> meanCloud(nTicks);
+    PointCloud<float> transRMSVec(nTicks);
+    PointCloud<int>   rangeVec(nTicks);
+    PointCloud<int>   coreRangeVec(nTicks);
+    PointCloud<float> deltaADCVec(nTicks);
 
-    // Use an iterated PCA to do "signal protection" on waveforms
-    std::vector<size_t> midPointVec(grouping,nTicks/2);
-    std::vector<float>  aveADCValVec(grouping,0.);
-    std::vector<float>  slopeADCVec(grouping,0.);
-    std::vector<float>  maxADCValVec(grouping,10000.);
-
+    VectorFloat       median64Vec(nTicks);
+ 
     size_t channelIdx(0);
     size_t halfGroup(grouping/2);
 
-    // Try a butterworth filter
-    // Note that the first parameters is in bins, so frequency will be this number/2048 times 1.25 MHz
-    //icarus_signal_processing::LowPassButterworthFilter butterFilter(250, 5, 4096);
-    icarus_signal_processing::LowPassButterworthFilter butterFilter(250, 5, 4096);
+    float  minEigenRat(1.1);
+
+    // Set offset bins for dropping outliers
+    size_t startBin(4);
+    size_t stopBin(halfGroup-startBin);
 
     // get an instance of the waveform tools
     icarus_signal_processing::WaveformTools<float> waveformTools;
@@ -610,75 +613,278 @@ void icarus_signal_processing::Denoiser1D_PCA::operator()(ArrayFloat::iterator  
     // Initiate the outer loop over channels which will actually be over groups
     while(channelIdx < numChannels)
     {
+        Eigen::Vector2f meanPos2 {0.,0.};
+        Eigen::Matrix2f eigenVectors2 {{0.,0.},{0.,0.}};
+        Eigen::Vector2f eigenValues2 {0.,0.};
+
         for(size_t tickIdx = 0; tickIdx < nTicks; tickIdx++)
         {
-            std::vector<float> adcVals(grouping);
+            VectorFloat tempLoADCVec(halfGroup);
+            VectorFloat tempHiADCVec(halfGroup);
+            VectorFloat fullADCVec(grouping);
 
-            for(size_t innerIdx = 0; innerIdx < grouping; innerIdx++)
-                adcVals[innerIdx] = (*(filteredWaveformsItr + channelIdx + innerIdx))[tickIdx];
+            for(size_t innerIdx = 0; innerIdx < halfGroup; innerIdx++)
+            {
+                // expand out the x axis here to prevent potential axis flipping
+                tempLoADCVec[innerIdx] = (*(filteredWaveformsItr + channelIdx + innerIdx))[tickIdx];
+                tempHiADCVec[innerIdx] = (*(filteredWaveformsItr + channelIdx + innerIdx + halfGroup))[tickIdx];
 
-            float meanLo = getIteratedMean(adcVals.begin(),           adcVals.begin()+halfGroup, .25);
-            float meanHi = getIteratedMean(adcVals.begin()+halfGroup, adcVals.end(),             .25);
+                fullADCVec[innerIdx]           = tempLoADCVec[innerIdx];
+                fullADCVec[innerIdx+halfGroup] = tempHiADCVec[innerIdx];
+            }
 
-            pointCloud[tickIdx] = WavePoint<float>(meanLo,meanHi);
+            PointCloud<float> lowADCVec(halfGroup);
+            PointCloud<float> hiADCVec(halfGroup);
+
+            for(size_t innerIdx = 0; innerIdx < halfGroup; innerIdx++)
+            {
+                // expand out the x axis here to prevent potential axis flipping
+                lowADCVec[innerIdx] = WavePoint<float>(10.*(float(innerIdx)-halfGroup/2),tempLoADCVec[innerIdx]);
+                hiADCVec[innerIdx]  = WavePoint<float>(10.*(float(innerIdx)-halfGroup/2),tempHiADCVec[innerIdx]);
+            }
+
+            waveformTools.principalComponents(lowADCVec, meanPos,  eigenVectors,  eigenValues,  2000., Denoising::nEigenValues, false);
+            waveformTools.principalComponents(hiADCVec,  meanPos2, eigenVectors2, eigenValues2, 2000., Denoising::nEigenValues, false);
+
+            int loRange,loCoreRange,hiRange,hiCoreRange,fullRange,fullCoreRange;
+
+            std::sort(tempLoADCVec.begin(),tempLoADCVec.end());
+            std::sort(tempHiADCVec.begin(),tempHiADCVec.end());
+            std::sort(fullADCVec.begin(),  fullADCVec.end());
+
+            float medianLo = getIteratedMedian(tempLoADCVec.begin()+startBin, tempLoADCVec.begin()+stopBin, loRange,   loCoreRange);
+            float medianHi = getIteratedMedian(tempHiADCVec.begin()+startBin, tempHiADCVec.begin()+stopBin, hiRange,   hiCoreRange);
+            float median64 = getIteratedMedian(fullADCVec.begin()+2*startBin, fullADCVec.begin()+2*stopBin, fullRange, fullCoreRange);
+
+            medianCloud[tickIdx]  = WavePoint<float>(medianLo,medianHi);
+            median64Vec[tickIdx]  = median64;
+            meanCloud[tickIdx]    = WavePoint<float>(meanPos[1],meanPos2[1]);
+            transRMSVec[tickIdx]  = WavePoint<float>(std::sqrt(eigenValues[0]),std::sqrt(eigenValues2[0]));
+            rangeVec[tickIdx]     = WavePoint<int>(loRange,hiRange);
+            coreRangeVec[tickIdx] = WavePoint<int>(loCoreRange,hiCoreRange);
+
+            std::sort(tempLoADCVec.begin(),tempLoADCVec.end());
+            std::sort(tempHiADCVec.begin(),tempHiADCVec.end());
+
+            deltaADCVec[tickIdx] = WavePoint<float>(tempLoADCVec[stopBin-1]-tempLoADCVec[startBin],tempHiADCVec[stopBin-1]-tempHiADCVec[startBin]);
         }
 
-        // Compute the PCA on the point cloud to get the coherent noise component
-        waveformTools.principalComponents(pointCloud, meanPos, eigenVectors, eigenValues, 2., 3., false);
+        // **** STEP 1: Here we find the candidate signal based on the max ADC difference in a group of 32 channels
+        // Compute an iterated PCA (removing outliers) to get ellipse containing the main points
+        getIteratedPCAEllipse(deltaADCVec, meanPos, eigenVectors, eigenValues, Denoising::nEigenValues, minEigenRat);
 
         // Remember that the eigen values are sorted smallest to largest and the eigen vectors are row oriented
         // So the primary axis will be index 1, the transverse index 0. 
         Eigen::Matrix2f rotMatrix;
         
-        rotMatrix << eigenVectors(1,0),eigenVectors(1,1),eigenVectors(0,0),eigenVectors(0,1);
+        rotMatrix << eigenVectors.row(1)(0),eigenVectors.row(1)(1),eigenVectors.row(0)(0),eigenVectors.row(0)(1);
 
         if (rotMatrix(0,0) < 0.) rotMatrix *= -1.;
 
-        float crossProduct = rotMatrix.row(0)[0]*rotMatrix.row(1)[1] - rotMatrix.row(0)[1]*rotMatrix.row(1)[0];
+        float determinant = rotMatrix.row(0)[0]*rotMatrix.row(1)[1] - rotMatrix.row(0)[1]*rotMatrix.row(1)[0];
 
-        rotMatrix.row(1) *= crossProduct;
+        rotMatrix.row(1) *= determinant;
 
-        VectorFloat correctionsLow(pointCloud.size(),0.);
+        // Set up to find indices for ticks with potential signal
+        CandSignalResultVec candSignalVec;
 
-        getPredictedCorrections(pointCloud, meanPos, rotMatrix, 3.*std::sqrt(eigenValues[1]), 3.*std::sqrt(eigenValues[0]), correctionsLow);
+        // Now find the indices for candidate signal containing ticks
+        getCandSignalIndicesEllipse(deltaADCVec, meanPos, rotMatrix, Denoising::nEigenValues*std::sqrt(eigenValues[1]), Denoising::nEigenValues*std::sqrt(eigenValues[0]), candSignalVec);
 
-        // Now go the other way
-        for(size_t tickIdx = 0; tickIdx < pointCloud.size(); tickIdx++)
-            pointCloud[tickIdx] = WavePoint<float>(pointCloud[tickIdx][1],pointCloud[tickIdx][0]);
+        CandSignalResultVec indexVec;
 
-        // Compute the PCA on the point cloud to get the coherent noise component
-        waveformTools.principalComponents(pointCloud, meanPos, eigenVectors, eigenValues, 2., 3., false);
+        for(const auto& candSignal : candSignalVec)
+        {
+            short index = candSignal.index;
+
+            // Check for a gap indicating a full chain has been found
+            if (!indexVec.empty() && index - indexVec.back().index > 4)
+            {
+                // Ignore short trains
+                if (indexVec.size() > 2)
+                {
+                    for(const auto& indexVal : indexVec)
+                    {
+                        if      (indexVal.hiLoIdx == 0) medianCloud[indexVal.index][0] = meanCloud[indexVal.index][1];
+                        else if (indexVal.hiLoIdx == 1) medianCloud[indexVal.index][1] = meanCloud[indexVal.index][0];
+                    }
+                }
+            
+                indexVec.clear();
+            }
+            // if the gap between pulse trains is small then merge
+            else if (!indexVec.empty() && index - indexVec.back().index > 0) 
+            {
+                size_t maxIndex = index - indexVec.back().index;
+
+                for(size_t idx = 0; idx < maxIndex; idx++)
+                {
+                    CandSignals temp = indexVec.back();
+
+                    temp.index++;
+
+                    indexVec.emplace_back(temp);
+                }
+            }
+
+            indexVec.emplace_back(candSignal);
+        }
+
+        // Clean up in case vector not empty
+        if (indexVec.size() > 2)
+        {
+            for(const auto& indexVal : indexVec)
+            {
+                if      (indexVal.hiLoIdx == 0) medianCloud[indexVal.index][0] = medianCloud[indexVal.index][1];
+                else if (indexVal.hiLoIdx == 1) medianCloud[indexVal.index][1] = medianCloud[indexVal.index][0];
+            }
+        }
+
+        // **** STEP 2: We do a final pass now looking at the value of the correction factors and look for candidate signal
+        // Compute an iterated PCA (removing outliers) to get ellipse containing the main points
+        minEigenRat =3.5;
+
+        getIteratedPCAEllipse(medianCloud, meanPos, eigenVectors, eigenValues, Denoising::nEigenValues, minEigenRat);
 
         // Remember that the eigen values are sorted smallest to largest and the eigen vectors are row oriented
         // So the primary axis will be index 1, the transverse index 0. 
-        rotMatrix << eigenVectors(1,0),eigenVectors(1,1),eigenVectors(0,0),eigenVectors(0,1);
+        rotMatrix << eigenVectors.row(1)(0),eigenVectors.row(1)(1),eigenVectors.row(0)(0),eigenVectors.row(0)(1);
 
         if (rotMatrix(0,0) < 0.) rotMatrix *= -1.;
 
-        crossProduct = rotMatrix.row(0)[0]*rotMatrix.row(1)[1] - rotMatrix.row(0)[1]*rotMatrix.row(1)[0];
+        determinant = rotMatrix.row(0)[0]*rotMatrix.row(1)[1] - rotMatrix.row(0)[1]*rotMatrix.row(1)[0];
 
-        rotMatrix.row(1) *= crossProduct;
+        rotMatrix.row(1) *= determinant;
 
-        VectorFloat correctionsHigh(pointCloud.size(),0.);
+        // Set up to find indices for ticks with potential signal
+        candSignalVec.clear();
 
-        getPredictedCorrections(pointCloud, meanPos, rotMatrix, 3.*std::sqrt(eigenValues[1]), 3.*std::sqrt(eigenValues[0]), correctionsHigh);
+        // Now find the indices for candidate signal containing ticks
+        getCandSignalIndicesCylinder(medianCloud, meanPos, rotMatrix, Denoising::nEigenValues*std::sqrt(eigenValues[1]), Denoising::nEigenValues*std::sqrt(eigenValues[0]), candSignalVec);
 
-        // Now we can correct the waveforms in this group
-        for(size_t innerIdx = 0; innerIdx < grouping; innerIdx++)
+        indexVec.clear();
+
+        float medCut(7.);
+
+        for(const auto& candSignal : candSignalVec)
         {
-            auto& filteredWaveform = *(filteredWaveformsItr + channelIdx+innerIdx);
-            auto& outWaveform      = *(waveLessCoherentItr + channelIdx+innerIdx);
-            auto& corMedians       = *(correctedMediansItr + channelIdx + innerIdx);
+            short index = candSignal.index;
 
-            if (innerIdx < halfGroup)
+            // Check for a gap indicating a full chain has been found
+            if (!indexVec.empty() && index - indexVec.back().index > 4)
             {
-                std::copy(correctionsLow.begin(),correctionsLow.end(),corMedians.begin());
-                std::transform(filteredWaveform.begin(),filteredWaveform.end(),correctionsLow.begin(),outWaveform.begin(),std::minus<float>());
+                // Ignore short trains
+                if (indexVec.size() > 2)
+                {
+                    // set up for case where both ranges are "bad" (hiLoIdx == 2)
+                    //short startIdx = std::max(0,indexVec.front().index-1);
+                    //short stopIdx  = std::min(4095,indexVec.back().index+1);
+                    //float startMed = std::abs(medianCloud[startIdx][0]) < std::abs(medianCloud[startIdx][1]) ? medianCloud[startIdx][0] : medianCloud[startIdx][1];
+                    //float stopMed  = std::abs(medianCloud[stopIdx][0])  < std::abs(medianCloud[stopIdx][1])  ? medianCloud[stopIdx][0]  : medianCloud[stopIdx][1];
+                    //float slope    = (stopMed - startMed) / float(stopIdx - startIdx);
+
+                    for(const auto& indexVal : indexVec)
+                    {
+                        //if (transRMSVec[indexVal.index][0] < 1.6 || transRMSVec[indexVal.index][1] < 1.6) continue;
+
+                        //float interp = startMed + slope * float(indexVal.index-startIdx);
+
+                        //if (std::abs(medianCloud[indexVal.index][0] - interp) > 4.) medianCloud[indexVal.index][0] = interp;
+                        //if (std::abs(medianCloud[indexVal.index][1] - interp) > 4.) medianCloud[indexVal.index][1] = interp;
+                        //if      (std::abs(medianCloud[indexVal.index][0] - interp) > medCut && std::abs(medianCloud[indexVal.index][1] - interp) < medCut) medianCloud[indexVal.index][0] = medianCloud[indexVal.index][1];
+                        //else if (std::abs(medianCloud[indexVal.index][0] - interp) < medCut && std::abs(medianCloud[indexVal.index][1] - interp) > medCut) medianCloud[indexVal.index][1] = medianCloud[indexVal.index][0];
+                        //else if (std::abs(medianCloud[indexVal.index][0] - interp) > medCut && std::abs(medianCloud[indexVal.index][1] - interp) > medCut)
+                        //{
+                        //    medianCloud[indexVal.index][0] = interp;
+                        //    medianCloud[indexVal.index][1] = interp;
+                        //}
+
+                        // Go with the simple solution for now... if the difference between the two is large then pick the smallest one. 
+                        float deltaMedian = medianCloud[indexVal.index][0] - medianCloud[indexVal.index][1];
+
+                        if (std::abs(deltaMedian) > medCut)
+                        {
+                            if (std::abs(medianCloud[indexVal.index][0]) < std::abs(medianCloud[indexVal.index][1])) medianCloud[indexVal.index][1] = medianCloud[indexVal.index][0];
+                            else                                                                                     medianCloud[indexVal.index][0] = medianCloud[indexVal.index][1];
+                        }
+                    }
+                }
+            
+                indexVec.clear();
             }
-            else
+            // if the gap between pulse trains is small then merge
+            else if (!indexVec.empty() && index - indexVec.back().index > 1) 
             {
-                std::copy(correctionsHigh.begin(),correctionsHigh.end(),corMedians.begin());
-                std::transform(filteredWaveform.begin(),filteredWaveform.end(),correctionsHigh.begin(),outWaveform.begin(),std::minus<float>());               
+                size_t maxIndex = index - indexVec.back().index - 1;
+
+                for(size_t idx = 0; idx < maxIndex; idx++)
+                {
+                    CandSignals temp = indexVec.back();
+
+                    temp.index++;
+
+                    indexVec.emplace_back(temp);
+                }
+            }
+
+            indexVec.emplace_back(candSignal);
+        }
+
+        // Clean up in case vector not empty
+        if (indexVec.size() > 2)
+        {
+            // set up for case where both ranges are "bad" (hiLoIdx == 2)
+            //short startIdx = std::max(0,indexVec.front().index-1);
+            //short stopIdx  = std::min(4095,indexVec.back().index+1);
+            //float startMed = std::abs(medianCloud[startIdx][0]) < std::abs(medianCloud[startIdx][1]) ? medianCloud[startIdx][0] : medianCloud[startIdx][1];
+            //float stopMed  = std::abs(medianCloud[stopIdx][0])  < std::abs(medianCloud[stopIdx][1])  ? medianCloud[stopIdx][0]  : medianCloud[stopIdx][1];
+            //float slope    = (stopMed - startMed) / float(stopIdx - startIdx);
+
+            for(const auto& indexVal : indexVec)
+            {
+                //if (transRMSVec[indexVal.index][0] < 1.6 || transRMSVec[indexVal.index][1] < 1.6) continue;
+
+                //float interp = startMed + slope * (indexVal.index-startIdx);
+
+                //if (std::abs(medianCloud[indexVal.index][0] - interp) > 4.) medianCloud[indexVal.index][0] = interp;
+                //if (std::abs(medianCloud[indexVal.index][1] - interp) > 4.) medianCloud[indexVal.index][1] = interp;
+                //if      (std::abs(medianCloud[indexVal.index][0] - interp) > medCut && std::abs(medianCloud[indexVal.index][1] - interp) < medCut) medianCloud[indexVal.index][0] = medianCloud[indexVal.index][1];
+                //else if (std::abs(medianCloud[indexVal.index][0] - interp) < medCut && std::abs(medianCloud[indexVal.index][1] - interp) > medCut) medianCloud[indexVal.index][1] = medianCloud[indexVal.index][0];
+                //else if (std::abs(medianCloud[indexVal.index][0] - interp) > medCut && std::abs(medianCloud[indexVal.index][1] - interp) > medCut)
+                //{
+                //    medianCloud[indexVal.index][0] = interp;
+                //    medianCloud[indexVal.index][1] = interp;
+                //}
+
+                float deltaMedian = medianCloud[indexVal.index][0] - medianCloud[indexVal.index][1];
+
+                if (std::abs(deltaMedian) > medCut)
+                {
+                    if (std::abs(medianCloud[indexVal.index][0]) < std::abs(medianCloud[indexVal.index][1])) medianCloud[indexVal.index][1] = medianCloud[indexVal.index][0];
+                    else                                                                                     medianCloud[indexVal.index][0] = medianCloud[indexVal.index][1];
+                }
+            }
+        }
+
+        // One last pass through
+        for (size_t tickIdx = 0; tickIdx < nTicks; tickIdx++)
+        {
+            for(size_t innerIdx = 0; innerIdx < halfGroup; innerIdx++)
+            {
+                // Set up to do correction
+                auto& filteredWaveformLo = *(filteredWaveformsItr + channelIdx + innerIdx);
+                auto& filteredWaveformHi = *(filteredWaveformsItr + channelIdx + innerIdx + halfGroup);
+                auto& outWaveformLo      = *(waveLessCoherentItr  + channelIdx + innerIdx);
+                auto& outWaveformHi      = *(waveLessCoherentItr  + channelIdx + innerIdx + halfGroup);
+                auto& corMediansLo       = *(correctedMediansItr  + channelIdx + innerIdx);
+                auto& corMediansHi       = *(correctedMediansItr  + channelIdx + innerIdx + halfGroup);
+
+                // Now we can correct the waveforms in this group
+                corMediansLo[tickIdx]  = medianCloud[tickIdx][0];
+                corMediansHi[tickIdx]  = medianCloud[tickIdx][1];
+
+                outWaveformLo[tickIdx] = filteredWaveformLo[tickIdx] - corMediansLo[tickIdx];
+                outWaveformHi[tickIdx] = filteredWaveformHi[tickIdx] - corMediansHi[tickIdx];
             }
         }
  
@@ -732,6 +938,7 @@ void icarus_signal_processing::Denoiser1D_NoCoherent::operator()(ArrayFloat::ite
                                                                  ArrayFloat::iterator              correctedMediansItr,
                                                                  FilterFunctionVec::const_iterator filterFunctionsItr,
                                                                  const VectorFloat&                thresholdVec,
+                                                                 const VectorInt&                  channelVec,
                                                                  const unsigned int                numChannels,
                                                                  const unsigned int                grouping,
                                                                  const unsigned int                offset,
@@ -747,6 +954,7 @@ void icarus_signal_processing::Denoiser1D_NoCoherent::operator()(ArrayFloat::ite
                                                correctedMediansItr,
                                                filterFunctionsItr,
                                                thresholdVec,
+                                               channelVec,
                                                numChannels,
                                                grouping,
                                                offset,
@@ -768,6 +976,7 @@ void icarus_signal_processing::Denoiser1D_Protect::operator()(ArrayFloat::iterat
                                                               ArrayFloat::iterator              correctedMediansItr,
                                                               FilterFunctionVec::const_iterator filterFunctionsItr,
                                                               const VectorFloat&                thresholdVec,
+                                                              const VectorInt&                  channelVec,
                                                               const unsigned int                numChannels,
                                                               const unsigned int                grouping,
                                                               const unsigned int                groupingOffset,
@@ -819,11 +1028,251 @@ void icarus_signal_processing::Denoiser1D_Protect::operator()(ArrayFloat::iterat
   
     return;
 }
+    
+void  icarus_signal_processing::Denoising::getIteratedPCAEllipse(PointCloud<float>&        pointCloud, 
+                                                                 Eigen::Vector<float,2>&   meanPos, 
+                                                                 Eigen::Matrix<float,2,2>& eigenVectors, 
+                                                                 Eigen::Vector<float,2>&   eigenValues,
+                                                                 const float&              nSigma,
+                                                                 const float&              minEigenRatio) const
+{
+    // get an instance of the waveform tools
+    icarus_signal_processing::WaveformTools<float> waveformTools;
+    
+    // Compute the PCA on the point cloud to get the coherent noise component
+    waveformTools.principalComponents(pointCloud, meanPos, eigenVectors, eigenValues, 2000., nSigma, false);
 
-bool  icarus_signal_processing::Denoising::getPredictedCorrections(const PointCloud<float>& pointCloud, const WavePoint<float>& meanPos, const Eigen::Matrix2f& rotMatrix, float majorAxis, float minorAxis, VectorFloat& correctionVec) const
+    // Remember that the eigen values are sorted smallest to largest and the eigen vectors are row oriented
+    // So the primary axis will be index 1, the transverse index 0. 
+    // Check the eigen value ratio
+    float eigenRatio = std::sqrt(eigenValues[1]) / std::sqrt(eigenValues[0]);
+
+    if (eigenRatio > minEigenRatio)
+    {
+        Eigen::Matrix2f rotMatrix;
+    
+        //rotMatrix << eigenVectors(1,0),eigenVectors(1,1),eigenVectors(0,0),eigenVectors(0,1);
+        rotMatrix << eigenVectors.row(1)(0),eigenVectors.row(1)(1),eigenVectors.row(0)(0),eigenVectors.row(0)(1);
+
+        if (rotMatrix(0,0) < 0.) rotMatrix *= -1.;
+
+        float determinant = rotMatrix.row(0)[0]*rotMatrix.row(1)[1] - rotMatrix.row(0)[1]*rotMatrix.row(1)[0];
+
+        rotMatrix.row(1) *= determinant;
+
+        // Now loop through the points and reject those that may be signal 
+        // These will be points whose magnitude are "outside" of an ellipse defined by the major/minor
+        // axes of the PCA of "N sigma".
+        PointCloud<float> cutPointCloud;
+
+        float majorAxis = nSigma*std::sqrt(eigenValues[1]);
+        float minorAxis = nSigma*std::sqrt(eigenValues[0]);
+   
+        for(size_t pointIdx = 0; pointIdx < pointCloud.size(); pointIdx++)
+        {
+            // Start by rotating to the elllipse coordinate system
+            WavePoint<float> input = pointCloud[pointIdx] - meanPos;
+            WavePoint<float> point = rotMatrix * input;
+
+            // The points are referenced to the ellipse center already so get vector magnitude and direction cosines
+            float pointMag = point.norm();
+            float cosTheta = point[0]/pointMag;
+            float sinTheta = point[1]/pointMag;
+
+            // Get intersection of this vector with ellipse edge
+            float            radical    = std::sqrt(std::pow(majorAxis*sinTheta,2)+std::pow(minorAxis*cosTheta,2));
+            WavePoint<float> ellipseInt(majorAxis * minorAxis * cosTheta / radical,majorAxis * minorAxis * sinTheta / radical);
+            float            ellipseMag = ellipseInt.norm();
+
+            // Is this a candidate signal?
+            // If so then replace with point on the error ellipse
+            if (pointMag < std::abs(ellipseMag)) cutPointCloud.emplace_back(pointCloud[pointIdx]);
+        }
+    
+        // Compute the PCA on the point cloud to get the coherent noise component
+        //if (cutPointCloud.size() < pointCloud.size()) waveformTools.principalComponents(cutPointCloud, meanPos, eigenVectors, eigenValues, 2000., nSigma, false);
+        if (cutPointCloud.size() > 6 && cutPointCloud.size() < pointCloud.size()) getIteratedPCAEllipse(cutPointCloud, meanPos, eigenVectors, eigenValues, nSigma, minEigenRatio);
+    }
+
+    return;
+}
+   
+void  icarus_signal_processing::Denoising::getIteratedPCAAxis(PointCloud<float>&        pointCloud, 
+                                                              Eigen::Vector<float,2>&   meanPos, 
+                                                              Eigen::Matrix<float,2,2>& eigenVectors, 
+                                                              Eigen::Vector<float,2>&   eigenValues,
+                                                              const float&              nSigma) const
+{
+    // get an instance of the waveform tools
+    icarus_signal_processing::WaveformTools<float> waveformTools;
+    
+    // Compute the PCA on the point cloud to get the coherent noise component
+    waveformTools.principalComponents(pointCloud, meanPos, eigenVectors, eigenValues, 2000., nSigma, false);
+
+    // Now loop through the points and reject those that may be signal 
+    // These will be points whose magnitude are "outside" of an ellipse defined by the major/minor
+    // axes of the PCA of "N sigma".
+    PointCloud<float> cutPointCloud;
+
+    float minorAxis = nSigma*std::sqrt(eigenValues[0]);
+   
+    for(size_t pointIdx = 0; pointIdx < pointCloud.size(); pointIdx++)
+    {
+        // Start by rotating to the elllipse coordinate system
+        WavePoint<float> input = pointCloud[pointIdx] - meanPos;
+
+        // Is this a candidate signal?
+        // If so then replace with point on the error ellipse
+        if (std::abs(input[1]) < minorAxis) cutPointCloud.emplace_back(pointCloud[pointIdx]);
+    }
+    
+    // Compute the PCA on the point cloud to get the coherent noise component
+    //if (cutPointCloud.size() < pointCloud.size()) waveformTools.principalComponents(cutPointCloud, meanPos, eigenVectors, eigenValues, 2000., nSigma, false);
+    if (cutPointCloud.size() > 6 && cutPointCloud.size() < pointCloud.size()) getIteratedPCAAxis(cutPointCloud, meanPos, eigenVectors, eigenValues, nSigma);
+
+    return;
+}
+
+void  icarus_signal_processing::Denoising::getGroupedPCA(PointCloud<float>&        pointCloud, 
+                                                         Eigen::Vector<float,2>&   meanPos, 
+                                                         Eigen::Matrix<float,2,2>& eigenVectors, 
+                                                         Eigen::Vector<float,2>&   eigenValues,
+                                                         const float&              nSigma) const
+{
+    // Our plan will be to break incoming point cloud into groups of 8
+    if (pointCloud.size() == 32)
+    {
+        // Goal is to develop a value for the coherent noise correction which tries to not include channels that might have signal
+        // Make a local copy for sorting, etc.
+        PointCloud<float> tempCloud = pointCloud;
+
+        std::sort(tempCloud.begin(),tempCloud.end(),[](const auto& left,const auto& right){return std::abs(left[1]) < std::abs(right[1]);});
+
+//        // Get an inital mean of elements in range of zero
+//        std::vector<float> adcVector;
+//
+//        for (const auto& point: pointCloud) adcVector.emplace_back(point[1]);
+//
+//        int range,coreRange;
+//
+//        float median = getIteratedMedian(adcVector.begin()+4,adcVector.end()-8, range, coreRange);
+//
+//        coreRange = std::min(coreRange,8);
+        float coreRange= 8.;
+
+        //median = 0.;
+
+        // Use this to sort our point cloud
+        //std::sort(tempCloud.begin(),tempCloud.end(),[median](const auto& left,const auto& right){return std::abs(left[1]-median) < std::abs(right[1]-median);});
+
+        // Drop the first four bins
+        tempCloud.erase(tempCloud.begin(),tempCloud.begin()+4);
+
+        // The intrinsic noise is no worse than like 3.7 counts on plane 0, 2.5 otherwise
+        // So assume non signal channel values will be +/- ~ 7.5 counts
+        //PointCloud<float>::iterator lastElemItr = std::find_if(tempCloud.begin(),tempCloud.end(),[median,coreRange](const auto& point){return std::abs(point[1]-median) > coreRange;});
+        PointCloud<float>::iterator lastElemItr = std::find_if(tempCloud.begin(),tempCloud.end(),[coreRange](const auto& point){return std::abs(point[1]) > coreRange;});
+
+        // Sanity check
+        int nBins = std::distance(tempCloud.begin(),lastElemItr);
+
+        if (nBins < 8)
+        {
+            //std::cout << "==> Truncated too short: " << nBins << ", median: " << median << ", range: " << coreRange << ", trunc point: " << tempCloud[nBins][1] << ", last point: " << tempCloud.back()[1] << std::endl;
+
+            lastElemItr = tempCloud.begin() + 8;
+        }
+        else if (nBins > 24)
+        {
+            //if (std::abs(tempCloud[nBins][1]-median) > 10.)
+            //{
+            //    std::cout << "++> Too many bins: " << nBins << ", median: " << median << ", range: " << coreRange << ", trunc point: " << tempCloud[nBins][1] << ", last point: " << tempCloud.back()[1] << std::endl;
+
+            //    std::cout << "    ADC vals: ";
+            //    for(const auto& point: tempCloud) std::cout << point[1] << " ";
+            //    std::cout << std::endl;
+            //}
+
+            lastElemItr = tempCloud.begin()+24;
+        }
+
+        tempCloud.erase(lastElemItr,tempCloud.end());
+
+        // Now use the PCA to compute correction
+        getIteratedPCAAxis(tempCloud,meanPos,eigenVectors,eigenValues,nSigma);
+
+        // Get an inital mean of elements in range of zero
+        std::vector<float> adcVector;
+
+        for (const auto& point: tempCloud) adcVector.emplace_back(point[1]);
+
+        int range,cRange;
+
+        float median = getIteratedMedian(adcVector.begin(),adcVector.end(), range, cRange);
+
+        meanPos[1] = median;
+
+        //PointCloud<float>        tempCloud(8);
+        //Eigen::Vector<float,2>   tempMeanPos;
+        //Eigen::Matrix<float,2,2> tempEigenVectors;
+        //Eigen::Vector<float,2>   tempEigenValues;
+
+        //float runningMean    = 0.;
+        //float runningSum     = 0.;
+
+        //float bestEigenValue = 100000000.;
+
+        ////std::cout << "**** Computing mean *****" << std::endl;
+
+        //for(size_t baseIdx = 0; baseIdx < 32; baseIdx += 8)
+        //{
+        //    std::copy(pointCloud.begin()+baseIdx,pointCloud.begin()+baseIdx+8,tempCloud.begin());
+
+        //    getIteratedPCAAxis(tempCloud,tempMeanPos,tempEigenVectors,tempEigenValues,nSigma);
+
+        //    //std::cout << "   - baseIdx: " << baseIdx << ", mean: " << tempMeanPos[1] << ", eigenValues: " << tempEigenValues[0] << "/" << tempEigenValues[1] << ", angle: " << tempEigenVectors.row(1)(0) << "/" << tempEigenVectors.row(1)(1) << std::endl;
+
+        //    if (tempEigenValues[0] < 6. && std::abs(tempEigenVectors.row(1)(1)) < 0.02)
+        //    {
+        //        runningMean += tempMeanPos[1] / tempEigenValues[0];
+        //        runningSum  += 1./ tempEigenValues[0];
+        //    }
+
+        //    if (tempEigenValues[0] < bestEigenValue)
+        //    {
+        //        bestEigenValue = tempEigenValues[0];
+        //        eigenVectors   = tempEigenVectors;
+        //        eigenValues    = tempEigenValues;
+        //    }
+        //}
+
+        //if (runningSum > 0.)
+        //{
+        //    meanPos[0] = 0.;
+        //    meanPos[1] = runningMean / runningSum;
+        //}
+
+        ////std::cout << "  ==> meanPos: " << meanPos[1] << std::endl;
+    }
+
+    return;
+}
+
+bool  icarus_signal_processing::Denoising::getPredictedCorrections(const PointCloud<float>& pointCloud, 
+                                                                   const WavePoint<float>&  meanPos, 
+                                                                   const Eigen::Matrix2f&   rotMatrix, 
+                                                                   float                    majorAxis, 
+                                                                   float                    minorAxis, 
+                                                                   PointCloud<float>&       correctionVec) const
 {
     // Here we try to return a vector of predicted correction factors given the input point cloud
     // Note that we have run a PCA on the input point cloud which determines an error ellipse encompassing the data
+
+    // Scale factor 
+    //float scaleFactor = minorAxis / majorAxis;
+
+    PointCloud<float> candSigVec;
+    PointCloud<float> ellipseVec;
    
     for(size_t pointIdx = 0; pointIdx < pointCloud.size(); pointIdx++)
     {
@@ -841,23 +1290,158 @@ bool  icarus_signal_processing::Denoising::getPredictedCorrections(const PointCl
         WavePoint<float> ellipseInt(majorAxis * minorAxis * cosTheta / radical,majorAxis * minorAxis * sinTheta / radical);
         float            ellipseMag = ellipseInt.norm();
 
-        // Is this a candidate signal?
-        // If so then replace with point on the error ellipse
-        if (pointMag > ellipseMag) point = ellipseInt;
+        // Possible candidate signal?
+        if (pointMag > ellipseMag)
+        {
+            candSigVec.emplace_back(point);
+            ellipseVec.emplace_back(ellipseInt);
+        } 
+        else
+        {
+            if (!candSigVec.empty())
+            {
+                for(size_t idx = 0; idx < candSigVec.size(); idx++)
+                {
+                    WavePoint<float>& candPoint = candSigVec[idx];
 
-        // In the coordinate system of the ellipse the major axis will define the predicted value for the y coordinate
-        // So set that to zero here
-        point[1] = 0.;
+                    if (candSigVec.size() > 2)
+                    {
+                        //if (std::abs(candPoint[0]) > std::abs(ellipseVec[idx][0])) candPoint[0] = ellipseVec[idx][0];
+                        //if (std::abs(candPoint[1]) > std::abs(ellipseVec[idx][1])) candPoint[1] = ellipseVec[idx][1];
+                        //if (std::abs(candPoint[0]) > majorAxis) candPoint[0] = majorAxis * candPoint[0]/std::abs(candPoint[0]);
+                        //if (std::abs(candPoint[1]) > minorAxis) candPoint[1] = minorAxis * candPoint[1]/std::abs(candPoint[1]);
 
-        // Rotate back to the input coordinate system
-        point = rotMatrix.transpose() * point;
+                        candPoint = ellipseVec[idx];
+                    }
 
-        correctionVec[pointIdx] = point[1];
+                    //candPoint[0] *= 1. - scaleFactor;
+
+                    candPoint = rotMatrix.transpose() * candPoint + meanPos;
+
+                    correctionVec.emplace_back(candPoint);
+                }
+
+                candSigVec.clear();
+                ellipseVec.clear();
+            }
+
+            // In the coordinate system of the ellipse the major axis will define the predicted value for the y coordinate
+            // So set that to zero here
+            //point[0] *= 1. - scaleFactor;
+
+            // Rotate back to the input coordinate system
+            point = rotMatrix.transpose() * point + meanPos;
+
+            correctionVec.emplace_back(point);
+        }
     }
 
     return true;
 }
 
+void  icarus_signal_processing::Denoising::getCandSignalIndicesEllipse(const PointCloud<float>& pointCloud,
+                                                                       const WavePoint<float>&  meanPos, 
+                                                                       const Eigen::Matrix2f&   rotMatrix, 
+                                                                       float                    majorAxis, 
+                                                                       float                    minorAxis, 
+                                                                       CandSignalResultVec&     candSignalsVec) const
+{
+    for(size_t pointIdx = 0; pointIdx < pointCloud.size(); pointIdx++)
+    {
+        // Start by rotating to the elllipse coordinate system
+        WavePoint<float> input = pointCloud[pointIdx] - meanPos;
+        WavePoint<float> point = rotMatrix * input;
+        //WavePoint<float> point = input;
+
+        // The points are referenced to the ellipse center already so get vector magnitude and direction cosines
+        float pointMag = point.norm();
+        float cosTheta = point[0]/pointMag;
+        float sinTheta = point[1]/pointMag;
+
+        // Get intersection of this vector with ellipse edge
+        float            radical    = std::sqrt(std::pow(majorAxis*sinTheta,2)+std::pow(minorAxis*cosTheta,2));
+        WavePoint<float> ellipseInt(majorAxis * minorAxis * cosTheta / radical,majorAxis * minorAxis * sinTheta / radical);
+        float            ellipseMag = ellipseInt.norm();
+
+        // Get intersection with edge of PCA. Since we know the direction cosines of the vector to the
+        //float radToPCA(0.);
+
+        //if (std::abs(point[0]) < majorAxis) radToPCA = minorAxis / std::abs(sinTheta);
+        //else                                radToPCA = majorAxis / std::abs(cosTheta);
+
+        // Possible candidate signal?
+        if (pointMag > ellipseMag) 
+        //if (pointMag > radToPCA) 
+        {
+            CandSignals candSignals;
+
+            candSignals.index = pointIdx;
+            candSignals.significance = pointMag / ellipseMag;
+            //candSignals.significance = pointMag / radToPCA;
+
+            //if      (std::abs(point[0]) > ellipseMag && point[1] < std::abs(ellipseMag)) candSignals.hiLoIdx = 0;
+            //else if (std::abs(point[1]) > ellipseMag && point[0] < std::abs(ellipseMag)) candSignals.hiLoIdx = 1;
+
+            // The following is not perfect but should work for this situation... so note we are using the mean
+            // corrected but unrotated points here. The idea is that the value of "ellipseMag" would be invariant
+            // under rotation
+            if      (std::abs(input[0]) > ellipseMag && input[1] < std::abs(ellipseMag)) candSignals.hiLoIdx = 0;
+            else if (std::abs(input[0]) < ellipseMag && input[1] > std::abs(ellipseMag)) candSignals.hiLoIdx = 1;
+            else                                                                         candSignals.hiLoIdx = 2;
+
+            candSignalsVec.emplace_back(candSignals);
+        }
+    }
+
+    return;
+}
+
+void  icarus_signal_processing::Denoising::getCandSignalIndicesCylinder(const PointCloud<float>& pointCloud,
+                                                                        const WavePoint<float>&  meanPos, 
+                                                                        const Eigen::Matrix2f&   rotMatrix, 
+                                                                        float                    majorAxis, 
+                                                                        float                    minorAxis, 
+                                                                        CandSignalResultVec&     candSignalsVec) const
+{
+    for(size_t pointIdx = 0; pointIdx < pointCloud.size(); pointIdx++)
+    {
+        // Start by rotating to the elllipse coordinate system
+        WavePoint<float> input = pointCloud[pointIdx] - meanPos;
+        WavePoint<float> point = rotMatrix * input;
+ 
+        // The points are referenced to the ellipse center already so get vector magnitude and direction cosines
+        float pointMag = point.norm();
+        float cosTheta = point[0]/pointMag;
+        float sinTheta = point[1]/pointMag;
+
+        // Get intersection with edge of PCA. Since we know the direction cosines of the vector to the
+        float radToPCA(0.);
+
+        if (std::abs(point[0]) < majorAxis) radToPCA = minorAxis / std::abs(sinTheta);
+        else                                radToPCA = majorAxis / std::abs(cosTheta);
+
+        // Possible candidate signal?
+        if (pointMag > radToPCA) 
+        {
+            CandSignals candSignals;
+
+            candSignals.index        = pointIdx;
+            candSignals.significance = pointMag / radToPCA;
+
+            // The following is not perfect but should work for this situation... so note we are using the mean
+            // corrected but unrotated points here. The idea is that the value of "ellipseMag" would be invariant
+            // under rotation
+            if      (std::abs(point[0]) > majorAxis && std::abs(point[1]) < minorAxis) candSignals.hiLoIdx = 0;
+            else if (std::abs(point[0]) < majorAxis && std::abs(point[1]) > minorAxis) candSignals.hiLoIdx = 1;
+            else if (std::abs(point[0]) > majorAxis && std::abs(point[1]) > minorAxis) candSignals.hiLoIdx = 2;
+            else                                                                       candSignals.hiLoIdx = 3;
+
+            candSignalsVec.emplace_back(candSignals);
+        }
+    }
+
+    return;
+}
 
 float icarus_signal_processing::Denoising::getMedian(std::vector<float>::iterator vecStart, std::vector<float>::iterator vecEnd) const
 {

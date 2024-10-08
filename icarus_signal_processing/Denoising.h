@@ -92,13 +92,31 @@ public:
     float getIteratedMean(  std::vector<float>::iterator, std::vector<float>::iterator, float) const;
     float getTruncatedMean( std::vector<float>::iterator, std::vector<float>::iterator, float) const;
 
-    bool  getPredictedCorrections(const PointCloud<float>&, const WavePoint<float>&, const Eigen::Matrix2f&, float, float, VectorFloat&) const;
+    void  getIteratedPCAEllipse(PointCloud<float>&, Eigen::Vector<float,2>&, Eigen::Matrix<float,2,2>&, Eigen::Vector<float,2>&, const float&, const float&) const;
+    void  getIteratedPCAAxis(   PointCloud<float>&, Eigen::Vector<float,2>&, Eigen::Matrix<float,2,2>&, Eigen::Vector<float,2>&, const float&) const;
+    void  getGroupedPCA(        PointCloud<float>&, Eigen::Vector<float,2>&, Eigen::Matrix<float,2,2>&, Eigen::Vector<float,2>&, const float&) const;
+
+    bool  getPredictedCorrections(const PointCloud<float>&, const WavePoint<float>&, const Eigen::Matrix2f&, float, float, PointCloud<float>&)  const;
+
+    struct CandSignals
+    {
+        short index;        // tick index of candidate signal
+        short hiLoIdx;      // which grouping?
+        float significance; // ratio of point magnitude ellipse boundary
+    };
+
+    using CandSignalResultVec = std::vector<CandSignals>;
+
+    void  getCandSignalIndicesEllipse( const PointCloud<float>&, const WavePoint<float>&, const Eigen::Matrix2f&, float, float, CandSignalResultVec&) const;
+    void  getCandSignalIndicesCylinder(const PointCloud<float>&, const WavePoint<float>&, const Eigen::Matrix2f&, float, float, CandSignalResultVec&) const;
+
+    const float nEigenValues = 3.5;
 
 private:
     // The code for the most probable calculation will need a std vector
     // We don't wnat to allocated/deallocate each call so have master copy here
     mutable std::vector<int> fMPVec;
-   // bool                     fOutputStats;
+    // bool                     fOutputStats;
   
 };
 
@@ -124,6 +142,7 @@ public:
                             ArrayFloat::iterator,
                             FilterFunctionVec::const_iterator,
                             const VectorFloat&,
+                            const VectorInt&,
                             const unsigned int,
                             const unsigned int,
                             const unsigned int,
@@ -167,6 +186,7 @@ public:
                     ArrayFloat::iterator,
                     FilterFunctionVec::const_iterator,
                     const VectorFloat&,
+                    const VectorInt&,
                     const unsigned int,
                     const unsigned int,
                     const unsigned int,
@@ -191,6 +211,7 @@ public:
                     ArrayFloat::iterator,
                     FilterFunctionVec::const_iterator,
                     const VectorFloat&,
+                    const VectorInt&,
                     const unsigned int,
                     const unsigned int,
                     const unsigned int,
@@ -215,6 +236,7 @@ public:
                     ArrayFloat::iterator,
                     FilterFunctionVec::const_iterator,
                     const VectorFloat&,
+                    const VectorInt&,
                     const unsigned int,
                     const unsigned int,
                     const unsigned int,
@@ -239,6 +261,7 @@ public:
                     ArrayFloat::iterator,
                     FilterFunctionVec::const_iterator,
                     const VectorFloat&,
+                    const VectorInt&,
                     const unsigned int,
                     const unsigned int,
                     const unsigned int,
@@ -262,6 +285,7 @@ public:
                     ArrayFloat::iterator,
                     FilterFunctionVec::const_iterator,
                     const VectorFloat&,
+                    const VectorInt&,
                     const unsigned int,
                     const unsigned int,
                     const unsigned int,
