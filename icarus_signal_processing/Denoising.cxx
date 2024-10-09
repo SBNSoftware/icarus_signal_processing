@@ -595,8 +595,6 @@ void icarus_signal_processing::Denoiser1D_PCA::operator()(ArrayFloat::iterator  
     PointCloud<int>   rangeVec(nTicks);
     PointCloud<int>   coreRangeVec(nTicks);
     PointCloud<float> deltaADCVec(nTicks);
-
-    VectorFloat       median64Vec(nTicks);
  
     size_t channelIdx(0);
     size_t halfGroup(grouping/2);
@@ -621,16 +619,12 @@ void icarus_signal_processing::Denoiser1D_PCA::operator()(ArrayFloat::iterator  
         {
             VectorFloat tempLoADCVec(halfGroup);
             VectorFloat tempHiADCVec(halfGroup);
-            VectorFloat fullADCVec(grouping);
 
             for(size_t innerIdx = 0; innerIdx < halfGroup; innerIdx++)
             {
                 // expand out the x axis here to prevent potential axis flipping
                 tempLoADCVec[innerIdx] = (*(filteredWaveformsItr + channelIdx + innerIdx))[tickIdx];
                 tempHiADCVec[innerIdx] = (*(filteredWaveformsItr + channelIdx + innerIdx + halfGroup))[tickIdx];
-
-                fullADCVec[innerIdx]           = tempLoADCVec[innerIdx];
-                fullADCVec[innerIdx+halfGroup] = tempHiADCVec[innerIdx];
             }
 
             PointCloud<float> lowADCVec(halfGroup);
@@ -646,18 +640,15 @@ void icarus_signal_processing::Denoiser1D_PCA::operator()(ArrayFloat::iterator  
             waveformTools.principalComponents(lowADCVec, meanPos,  eigenVectors,  eigenValues,  2000., Denoising::nEigenValues, false);
             waveformTools.principalComponents(hiADCVec,  meanPos2, eigenVectors2, eigenValues2, 2000., Denoising::nEigenValues, false);
 
-            int loRange,loCoreRange,hiRange,hiCoreRange,fullRange,fullCoreRange;
+            int loRange,loCoreRange,hiRange,hiCoreRange;
 
             std::sort(tempLoADCVec.begin(),tempLoADCVec.end());
             std::sort(tempHiADCVec.begin(),tempHiADCVec.end());
-            std::sort(fullADCVec.begin(),  fullADCVec.end());
 
             float medianLo = getIteratedMedian(tempLoADCVec.begin()+startBin, tempLoADCVec.begin()+stopBin, loRange,   loCoreRange);
             float medianHi = getIteratedMedian(tempHiADCVec.begin()+startBin, tempHiADCVec.begin()+stopBin, hiRange,   hiCoreRange);
-            float median64 = getIteratedMedian(fullADCVec.begin()+2*startBin, fullADCVec.begin()+2*stopBin, fullRange, fullCoreRange);
 
             medianCloud[tickIdx]  = WavePoint<float>(medianLo,medianHi);
-            median64Vec[tickIdx]  = median64;
             meanCloud[tickIdx]    = WavePoint<float>(meanPos[1],meanPos2[1]);
             transRMSVec[tickIdx]  = WavePoint<float>(std::sqrt(eigenValues[0]),std::sqrt(eigenValues2[0]));
             rangeVec[tickIdx]     = WavePoint<int>(loRange,hiRange);
@@ -1148,53 +1139,20 @@ void  icarus_signal_processing::Denoising::getGroupedPCA(PointCloud<float>&     
 
         std::sort(tempCloud.begin(),tempCloud.end(),[](const auto& left,const auto& right){return std::abs(left[1]) < std::abs(right[1]);});
 
-//        // Get an inital mean of elements in range of zero
-//        std::vector<float> adcVector;
-//
-//        for (const auto& point: pointCloud) adcVector.emplace_back(point[1]);
-//
-//        int range,coreRange;
-//
-//        float median = getIteratedMedian(adcVector.begin()+4,adcVector.end()-8, range, coreRange);
-//
-//        coreRange = std::min(coreRange,8);
         float coreRange= 8.;
-
-        //median = 0.;
-
-        // Use this to sort our point cloud
-        //std::sort(tempCloud.begin(),tempCloud.end(),[median](const auto& left,const auto& right){return std::abs(left[1]-median) < std::abs(right[1]-median);});
 
         // Drop the first four bins
         tempCloud.erase(tempCloud.begin(),tempCloud.begin()+4);
 
         // The intrinsic noise is no worse than like 3.7 counts on plane 0, 2.5 otherwise
         // So assume non signal channel values will be +/- ~ 7.5 counts
-        //PointCloud<float>::iterator lastElemItr = std::find_if(tempCloud.begin(),tempCloud.end(),[median,coreRange](const auto& point){return std::abs(point[1]-median) > coreRange;});
         PointCloud<float>::iterator lastElemItr = std::find_if(tempCloud.begin(),tempCloud.end(),[coreRange](const auto& point){return std::abs(point[1]) > coreRange;});
 
         // Sanity check
         int nBins = std::distance(tempCloud.begin(),lastElemItr);
 
-        if (nBins < 8)
-        {
-            //std::cout << "==> Truncated too short: " << nBins << ", median: " << median << ", range: " << coreRange << ", trunc point: " << tempCloud[nBins][1] << ", last point: " << tempCloud.back()[1] << std::endl;
-
-            lastElemItr = tempCloud.begin() + 8;
-        }
-        else if (nBins > 24)
-        {
-            //if (std::abs(tempCloud[nBins][1]-median) > 10.)
-            //{
-            //    std::cout << "++> Too many bins: " << nBins << ", median: " << median << ", range: " << coreRange << ", trunc point: " << tempCloud[nBins][1] << ", last point: " << tempCloud.back()[1] << std::endl;
-
-            //    std::cout << "    ADC vals: ";
-            //    for(const auto& point: tempCloud) std::cout << point[1] << " ";
-            //    std::cout << std::endl;
-            //}
-
-            lastElemItr = tempCloud.begin()+24;
-        }
+        if      (nBins < 8)  lastElemItr = tempCloud.begin() + 8;
+        else if (nBins > 24) lastElemItr = tempCloud.begin() + 24;
 
         tempCloud.erase(lastElemItr,tempCloud.end());
 
@@ -1211,48 +1169,6 @@ void  icarus_signal_processing::Denoising::getGroupedPCA(PointCloud<float>&     
         float median = getIteratedMedian(adcVector.begin(),adcVector.end(), range, cRange);
 
         meanPos[1] = median;
-
-        //PointCloud<float>        tempCloud(8);
-        //Eigen::Vector<float,2>   tempMeanPos;
-        //Eigen::Matrix<float,2,2> tempEigenVectors;
-        //Eigen::Vector<float,2>   tempEigenValues;
-
-        //float runningMean    = 0.;
-        //float runningSum     = 0.;
-
-        //float bestEigenValue = 100000000.;
-
-        ////std::cout << "**** Computing mean *****" << std::endl;
-
-        //for(size_t baseIdx = 0; baseIdx < 32; baseIdx += 8)
-        //{
-        //    std::copy(pointCloud.begin()+baseIdx,pointCloud.begin()+baseIdx+8,tempCloud.begin());
-
-        //    getIteratedPCAAxis(tempCloud,tempMeanPos,tempEigenVectors,tempEigenValues,nSigma);
-
-        //    //std::cout << "   - baseIdx: " << baseIdx << ", mean: " << tempMeanPos[1] << ", eigenValues: " << tempEigenValues[0] << "/" << tempEigenValues[1] << ", angle: " << tempEigenVectors.row(1)(0) << "/" << tempEigenVectors.row(1)(1) << std::endl;
-
-        //    if (tempEigenValues[0] < 6. && std::abs(tempEigenVectors.row(1)(1)) < 0.02)
-        //    {
-        //        runningMean += tempMeanPos[1] / tempEigenValues[0];
-        //        runningSum  += 1./ tempEigenValues[0];
-        //    }
-
-        //    if (tempEigenValues[0] < bestEigenValue)
-        //    {
-        //        bestEigenValue = tempEigenValues[0];
-        //        eigenVectors   = tempEigenVectors;
-        //        eigenValues    = tempEigenValues;
-        //    }
-        //}
-
-        //if (runningSum > 0.)
-        //{
-        //    meanPos[0] = 0.;
-        //    meanPos[1] = runningMean / runningSum;
-        //}
-
-        ////std::cout << "  ==> meanPos: " << meanPos[1] << std::endl;
     }
 
     return;
@@ -1351,7 +1267,6 @@ void  icarus_signal_processing::Denoising::getCandSignalIndicesEllipse(const Poi
         // Start by rotating to the elllipse coordinate system
         WavePoint<float> input = pointCloud[pointIdx] - meanPos;
         WavePoint<float> point = rotMatrix * input;
-        //WavePoint<float> point = input;
 
         // The points are referenced to the ellipse center already so get vector magnitude and direction cosines
         float pointMag = point.norm();
@@ -1363,24 +1278,13 @@ void  icarus_signal_processing::Denoising::getCandSignalIndicesEllipse(const Poi
         WavePoint<float> ellipseInt(majorAxis * minorAxis * cosTheta / radical,majorAxis * minorAxis * sinTheta / radical);
         float            ellipseMag = ellipseInt.norm();
 
-        // Get intersection with edge of PCA. Since we know the direction cosines of the vector to the
-        //float radToPCA(0.);
-
-        //if (std::abs(point[0]) < majorAxis) radToPCA = minorAxis / std::abs(sinTheta);
-        //else                                radToPCA = majorAxis / std::abs(cosTheta);
-
         // Possible candidate signal?
         if (pointMag > ellipseMag) 
-        //if (pointMag > radToPCA) 
         {
             CandSignals candSignals;
 
             candSignals.index = pointIdx;
             candSignals.significance = pointMag / ellipseMag;
-            //candSignals.significance = pointMag / radToPCA;
-
-            //if      (std::abs(point[0]) > ellipseMag && point[1] < std::abs(ellipseMag)) candSignals.hiLoIdx = 0;
-            //else if (std::abs(point[1]) > ellipseMag && point[0] < std::abs(ellipseMag)) candSignals.hiLoIdx = 1;
 
             // The following is not perfect but should work for this situation... so note we are using the mean
             // corrected but unrotated points here. The idea is that the value of "ellipseMag" would be invariant
@@ -1428,9 +1332,8 @@ void  icarus_signal_processing::Denoising::getCandSignalIndicesCylinder(const Po
             candSignals.index        = pointIdx;
             candSignals.significance = pointMag / radToPCA;
 
-            // The following is not perfect but should work for this situation... so note we are using the mean
-            // corrected but unrotated points here. The idea is that the value of "ellipseMag" would be invariant
-            // under rotation
+            // Here we are checking if the rotated points lie in the cylinder defined by the
+            // major and minor axis of the input PCA ellipse
             if      (std::abs(point[0]) > majorAxis && std::abs(point[1]) < minorAxis) candSignals.hiLoIdx = 0;
             else if (std::abs(point[0]) < majorAxis && std::abs(point[1]) > minorAxis) candSignals.hiLoIdx = 1;
             else if (std::abs(point[0]) > majorAxis && std::abs(point[1]) > minorAxis) candSignals.hiLoIdx = 2;
