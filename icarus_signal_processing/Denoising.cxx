@@ -1951,7 +1951,7 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
             {
                 correctedMediansItr[k][i] = median;
                 if (isGoodChannel[k]) waveLessCoherentItr[k][i] = filteredWaveformsItr[k][i] - median;
-                else                  waveLessCoherentItr[k][i] = -100.;
+                else                  waveLessCoherentItr[k][i] = 0.;
             }
         }
     }
