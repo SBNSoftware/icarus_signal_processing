@@ -173,7 +173,9 @@ void icarus_signal_processing::Denoiser1D::operator()(ArrayFloat::iterator      
     }
 
     // Attempt to protect signal
-    getSelectVals(morphedWaveformsItr, selectValsItr, roiItr, thresholdVec, numChannels, grouping, window);
+    // 5/9/2025: Commenting out call here completely as "unnecessary". With this removed the only "protection" would be the case of an input bad channel 
+    //           Essentially this preserves the way things have been operating in recent releases. 
+    //getSelectVals(morphedWaveformsItr, selectValsItr, roiItr, thresholdVec, numChannels, grouping, window);
     //getSelectValsWPCA(morphedWaveformsItr, selectValsItr, roiItr, thresholdVec, numChannels, grouping, window);
 
     if (fOutputStats)
