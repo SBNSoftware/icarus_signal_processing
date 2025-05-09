@@ -173,8 +173,8 @@ void icarus_signal_processing::Denoiser1D::operator()(ArrayFloat::iterator      
     }
 
     // Attempt to protect signal
-    //getSelectVals(morphedWaveformsItr, selectValsItr, roiItr, thresholdVec, numChannels, grouping, window);
-    getSelectValsWPCA(morphedWaveformsItr, selectValsItr, roiItr, thresholdVec, numChannels, grouping, window);
+    getSelectVals(morphedWaveformsItr, selectValsItr, roiItr, thresholdVec, numChannels, grouping, window);
+    //getSelectValsWPCA(morphedWaveformsItr, selectValsItr, roiItr, thresholdVec, numChannels, grouping, window);
 
     if (fOutputStats)
     {
