@@ -85,56 +85,38 @@ void icarus_signal_processing::Denoising::getSelectValsWPCA(ArrayFloat::const_it
 {
     auto nTicks = morphedWaveformsItr[0].size();
 
-    // Set a protection width
-    int halfWidth = std::max(int(window/8),4);
-
 //    std::cout << "***** getSelectVals ***** numChannels: " << numChannels << ", grouping: " << grouping << std::endl;
 
-    for (size_t i=0; i<numChannels; ++i) 
+    Eigen::Vector<float,2>   meanPos;
+    Eigen::Matrix<float,2,2> eigenVectors;
+    Eigen::Vector<float,2>   eigenValues;
+    float                    nSigma;
+
+    // need to create a "point cloud"
+    PointCloud<float> morphedCloud(nTicks);
+
+    for (size_t channelIdx=0; channelIdx<numChannels; ++channelIdx) 
     {
-        VectorFloat localVec = morphedWaveformsItr[i];
+        VectorFloat localVec = morphedWaveformsItr[channelIdx];
 
-        float median = getMedian(localVec.begin(), localVec.end());
+        for(size_t idx = 0; idx < nTicks; idx++) morphedCloud[idx] = WavePoint<float>(idx,localVec[idx]);
 
-        std::vector<float> baseVec;
-        baseVec.resize(localVec.size());
+        // Now use the PCA to compute correction
+        getIteratedPCAAxis(morphedCloud,meanPos,eigenVectors,eigenValues,nSigma);
 
-        for (size_t j=0; j<baseVec.size(); ++j) baseVec[j] = morphedWaveformsItr[i][j] - median;
+        for (size_t j=0; j<nTicks; ++j) morphedCloud[j][1] = morphedWaveformsItr[channelIdx][j] - meanPos[1];
 
-        float threshold = thresholdVec[i];
+        meanPos[1] = 0.;
 
-        // make sure the roi vector is initialized
-        std::fill(roiItr[i].begin(),roiItr[i].end(),false);
-
-        int lb(-2 * halfWidth);
-
-        for (size_t j=0; j<nTicks; ++j) 
+        //float threshold = std::max(float(5.)*std::sqrt(eigenValues[0]),thresholdVec[channelIdx]);
+        float threshold = thresholdVec[channelIdx] * std::sqrt(eigenValues[0]);
+        
+        for(size_t tickIdx = 0; tickIdx < nTicks; tickIdx++)
         {
-            // Are we over threshold?
-            if (std::fabs(baseVec[j]) > threshold) 
-            {
-                // Check Bounds
-                selectValsItr[i][j] = true;
 
-                // Check ROI limits
-                if (lb < -halfWidth) lb = j - halfWidth;
-            } 
-            else 
-            {
-                selectValsItr[i][j] = false;
+            float cutVal = (eigenVectors * (morphedCloud[tickIdx] - meanPos))[0] + threshold;
 
-                // Check if we had gone over threshold and need to set our ROI
-                if (lb > -(halfWidth+1))
-                {
-                    int    ub         = j + halfWidth;
-                    size_t lowerBound = std::max(lb, 0);
-                    size_t upperBound = std::min(ub, (int) nTicks);
-
-                    for (size_t k=lowerBound; k<upperBound; ++k) roiItr[i][k] = true;
-                }
-
-                lb = -2 * halfWidth;
-            }
+            if (std::abs(morphedCloud[tickIdx][1]) > cutVal) selectValsItr[channelIdx][tickIdx] = true;
         }
     }
 
@@ -190,7 +172,11 @@ void icarus_signal_processing::Denoiser1D::operator()(ArrayFloat::iterator      
         selStart   = morphStop;
     }
 
-    getSelectVals(morphedWaveformsItr, selectValsItr, roiItr, thresholdVec, numChannels, grouping, window);
+    // Attempt to protect signal
+    // 5/9/2025: Commenting out call here completely as "unnecessary". With this removed the only "protection" would be the case of an input bad channel 
+    //           Essentially this preserves the way things have been operating in recent releases. 
+    //getSelectVals(morphedWaveformsItr, selectValsItr, roiItr, thresholdVec, numChannels, grouping, window);
+    //getSelectValsWPCA(morphedWaveformsItr, selectValsItr, roiItr, thresholdVec, numChannels, grouping, window);
 
     if (fOutputStats)
     {
@@ -1862,6 +1848,12 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
     // get an instance of the waveform tools
     icarus_signal_processing::WaveformTools<float> waveformTools;
 
+    // identify bad channels
+    std::vector<bool> isGoodChannel(numChannels);
+
+    for(size_t channelIdx = 0; channelIdx < numChannels; channelIdx++)
+        isGoodChannel[channelIdx] = std::count(selectValsItr[channelIdx].begin(),selectValsItr[channelIdx].end(),true) < 4096 ? true : false;
+
     VectorFloat vl(grouping/2);
 
     VectorFloat vu(grouping/2);
@@ -1884,11 +1876,11 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
                 // Allow for signal protection?
                 // When subtracting in groups of 64 this does not seem to be working as one might expect
                 // So removing for now (12/6/2021)
-//                if (!selectValsItr[c][i])
-//                {
+                if (!selectValsItr[c][i])
+                {
                     if (c < group_mid) vl[idxL++] = filteredWaveformsItr[c][i];
                     else               vu[idxU++] = filteredWaveformsItr[c][i];
-//                }
+                }
             }
 
             float median(0.);
@@ -1960,7 +1952,8 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
             for (auto k=group_start; k<group_end; ++k) 
             {
                 correctedMediansItr[k][i] = median;
-                waveLessCoherentItr[k][i] = filteredWaveformsItr[k][i] - median;
+                if (isGoodChannel[k]) waveLessCoherentItr[k][i] = filteredWaveformsItr[k][i] - median;
+                else                  waveLessCoherentItr[k][i] = 0.;
             }
         }
     }
@@ -2312,8 +2305,9 @@ void icarus_signal_processing::Denoising::removeCoherentNoise(ArrayFloat::iterat
             {
                 float median = correctedMediansItr[k][j];
 
-                waveLessCoherentItr[k][j] = filteredWaveformsItr[k][j] - median;
-                v[idxV++]                 = waveLessCoherentItr[k][j];
+                // Don't apply correction if channel labeled "bad"
+                if (!selectValsItr[k][j]) waveLessCoherentItr[k][j] = filteredWaveformsItr[k][j] - median;
+                v[idxV++] = waveLessCoherentItr[k][j];
             }
 
             intrinsicRMSItr[i][j] = std::sqrt(std::inner_product(v.begin(), v.begin()+idxV, v.begin(), 0.) / float(v.size()));
