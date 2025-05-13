@@ -17,7 +17,7 @@ cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
 
 find_package(cetmodules 3.24.01 REQUIRED)
 
-project(icarus_signal_processing VERSION 09.91.02.02 LANGUAGES CXX)
+project(icarus_signal_processing VERSION 10.06.00.01 LANGUAGES CXX)
 
 include(CetCMakeEnv)
 cet_cmake_env()
