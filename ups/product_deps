@@ -311,6 +311,8 @@ c14:debug	c14:p3915:debug	-nq-
 c14:prof	c14:p3915:prof	-nq-
 c7:debug	c7:p3915:debug	-nq-
 c7:prof		c7:p3915:prof	-nq-
+e28:debug       e28:debug       -nq-
+e28:prof        e28:prof        -nq-
 e26:debug	e26:p3915:debug	-nq-
 e26:prof	e26:p3915:prof	-nq-
 e20:debug	e20:p3915:debug	-nq-
