@@ -341,7 +341,7 @@ template <typename T> inline void WaveformTools<T>::getTruncatedMean(const std::
         {
             T val = waveform[waveIdx];
 
-            if (isnan(val))
+            if (std::isnan(val))
             {
                 std::cout << "getTruncatedMean finds nan for waveform val! waveform size: " << waveform.size() << ", idx:" << waveIdx << " --> Skipping" << std::endl;
                 continue;
